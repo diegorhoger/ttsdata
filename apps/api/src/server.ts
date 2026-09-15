@@ -21,6 +21,7 @@ import { registerDataQualityRoutes } from './routes/dataQuality';
 import { registerPersonalScoreRoutes } from './routes/personalScore';
 import { registerOnboardingRoutes } from './routes/onboarding';
 import { registerMyPerformanceRoutes } from './routes/myPerformance';
+import { registerReferralRoutes } from './routes/referrals';
 import { registerHealthRoutes } from './routes/health';
 import { errorHandler } from './lib/errors';
 
@@ -98,6 +99,9 @@ async function buildServer() {
 
   // My Performance Dashboard
   await app.register(registerMyPerformanceRoutes, { prefix: '/api/my-performance' });
+
+  // Referral system
+  await app.register(registerReferralRoutes, { prefix: '/api/referrals' });
 
   return app;
 }
