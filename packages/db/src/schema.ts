@@ -57,6 +57,12 @@ export const workspaces = pgTable('workspaces', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Type exports for use across packages
+export type Product = typeof products.$inferSelect;
+export type ProductSnapshot = typeof productSnapshots.$inferSelect;
+export type TrendSignal = typeof trendSignals.$inferSelect;
+export type OpportunityScore = typeof opportunityScores.$inferSelect;
+
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
   workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id),

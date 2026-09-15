@@ -6,7 +6,7 @@ import 'dotenv/config';
 import { Queue, Worker } from 'bullmq';
 import { Redis } from 'ioredis';
 import { db } from './lib/db';
-import { runScoringPipeline } from './lib/scoring';
+import { runScoringPipeline } from './jobs/runScoring';
 import { ingestProducts } from './jobs/ingestProducts';
 import { ingestSnapshots } from './jobs/ingestSnapshots';
 import { calculateTrendSignals } from './jobs/calculateTrends';
@@ -37,7 +37,7 @@ const scoringWorker = new Worker('scoring', async (job) => {
   console.log(`Processing scoring job ${job.name}...`);
   
   if (job.name === 'run-scoring-pipeline') {
-    return await runScoringPipeline(db, job.data.marketplace);
+    return await runScoringPipeline(job.data.marketplace);
   }
 }, { connection: redis });
 
