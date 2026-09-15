@@ -14,6 +14,7 @@ import { registerProductRoutes } from './routes/products';
 import { registerTikTokRoutes } from './routes/tiktok';
 import { registerConnectionRoutes } from './routes/connections';
 import { registerWatchlistRoutes } from './routes/watchlists';
+import { registerAlertRoutes } from './routes/alerts';
 import { registerHealthRoutes } from './routes/health';
 import { errorHandler } from './lib/errors';
 
@@ -70,6 +71,9 @@ async function buildServer() {
 
   // Watchlist routes
   await app.register(registerWatchlistRoutes, { prefix: '/api/watchlists' });
+
+  // Alert routes
+  await app.register(registerAlertRoutes, { prefix: '/api/alerts' });
 
   return app;
 }
