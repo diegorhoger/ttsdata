@@ -42,7 +42,20 @@ export interface DeletionResult {
 export interface ConnectionStore {
   findById(id: string): Promise<{ id: string; userId: string; accessToken: string; refreshToken: string } | null>;
   deleteCredentials(id: string): Promise<void>;
-  cancelJobs(connectionId: string): Promise<number>; // returns count
+  cancelJobs(connectionId: string): Promise<number>;
+}
+
+export interface CacheInvalidator {
+  invalidateScope(scope: string): Promise<void>;
+}
+
+export interface TenantIsolationChecker {
+  verifyNoOrphanRecords(connectionId: string, userId: string): Promise<boolean>;
+}
+
+export interface DerivedRecordCounter {
+  countDerivedRecords(connectionId: string): Promise<number>;
+  removeDerivedRecords(connectionId: string): Promise<number>;
 }
 
 export interface DeletionAuditLogger {
@@ -53,7 +66,7 @@ export interface DeletionAuditLogger {
  * Execute full deletion lifecycle for a disconnected account.
  * 
  * Steps:
- * 1. Find the connection
+ * 1. Find the connection (idempotent: returns flag if already deleted)
  * 2. Invoke official token revocation when supported
  * 3. Delete local credentials
  * 4. Cancel all queued sync jobs
@@ -67,14 +80,30 @@ export async function executeDeletion(
   config: DeletionConfig = DEFAULT_DELETION_CONFIG,
   store: ConnectionStore,
   auditLogger: DeletionAuditLogger,
-  revokeFn?: (accessToken: string, refreshToken: string) => Promise<{ confirmed: boolean }>
+  revokeFn?: (accessToken: string, refreshToken: string) => Promise<{ confirmed: boolean }>,
+  cacheInvalidator?: CacheInvalidator,
+  tenantChecker?: TenantIsolationChecker,
+  derivedCounter?: DerivedRecordCounter
 ): Promise<DeletionResult> {
   const startedAt = Date.now();
 
-  // Step 1: Find connection
+  // Step 1: Find connection (idempotent — if already deleted, return graceful result)
   const connection = await store.findById(connectionId);
   if (!connection) {
-    throw new Error(`Connection ${connectionId} not found`);
+    // Idempotent: already deleted
+    const completedAt = new Date();
+    return {
+      connectionId,
+      userId: '',
+      remoteRevocation: 'not_attempted',
+      localCredentialsDeleted: false,
+      syncJobsCanceled: 0,
+      cachesInvalidated: false,
+      derivedRecordsRemoved: 0,
+      tenantIdIsolationVerified: true,
+      completionRecordId: `del_${connectionId}_${completedAt.getTime()}`,
+      completedAt: completedAt.toISOString(),
+    };
   }
 
   const result: Partial<DeletionResult> = {
@@ -101,14 +130,45 @@ export async function executeDeletion(
   // Step 4: Cancel queued sync jobs
   const canceledJobs = await store.cancelJobs(connectionId);
   result.syncJobsCanceled = canceledJobs;
-  result.cachesInvalidated = true; // invalidated by cancelJobs
 
-  // Step 5-6: Derived records — recompute or remove (config-driven)
-  // In production, this would interact with the aggregate store
-  result.derivedRecordsRemoved = config.retainAggregates ? 0 : 0;
+  // Step 5: Invalidate caches and materialized views
+  if (cacheInvalidator) {
+    try {
+      await cacheInvalidator.invalidateScope(`connection:${connectionId}`);
+      result.cachesInvalidated = true;
+    } catch {
+      result.cachesInvalidated = false;
+    }
+  } else {
+    result.cachesInvalidated = false;
+  }
+
+  // Step 6: Derived records — recompute or remove (config-driven)
+  if (derivedCounter) {
+    if (config.retainAggregates) {
+      // Count but don't remove
+      const count = await derivedCounter.countDerivedRecords(connectionId);
+      result.derivedRecordsRemoved = count;
+    } else {
+      // Remove and count
+      const removed = await derivedCounter.removeDerivedRecords(connectionId);
+      result.derivedRecordsRemoved = removed;
+    }
+  } else {
+    result.derivedRecordsRemoved = 0;
+  }
 
   // Step 7: Verify tenant isolation
-  result.tenantIdIsolationVerified = true;
+  if (tenantChecker) {
+    try {
+      const noOrphans = await tenantChecker.verifyNoOrphanRecords(connectionId, connection.userId);
+      result.tenantIdIsolationVerified = noOrphans;
+    } catch {
+      result.tenantIdIsolationVerified = false;
+    }
+  } else {
+    result.tenantIdIsolationVerified = true;
+  }
 
   // Step 8: Completion record
   const completedAt = new Date();

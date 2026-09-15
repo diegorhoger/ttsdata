@@ -4,6 +4,7 @@
       "tests/**/*.test.ts"
     ],
     "environment": "node",
-    "globals": true
+    "globals": true,
+    "cacheDir": "/workspace/.vitest-cache"
   }
 }

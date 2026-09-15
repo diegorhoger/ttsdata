@@ -13,6 +13,7 @@ import { registerAuthRoutes } from './routes/auth';
 import { registerProductRoutes } from './routes/products';
 import { registerTikTokRoutes } from './routes/tiktok';
 import { registerConnectionRoutes } from './routes/connections';
+import { registerWatchlistRoutes } from './routes/watchlists';
 import { registerHealthRoutes } from './routes/health';
 import { errorHandler } from './lib/errors';
 
@@ -66,6 +67,9 @@ async function buildServer() {
 
   // Connection deletion routes
   await app.register(registerConnectionRoutes, { prefix: '/api/connections' });
+
+  // Watchlist routes
+  await app.register(registerWatchlistRoutes, { prefix: '/api/watchlists' });
 
   return app;
 }

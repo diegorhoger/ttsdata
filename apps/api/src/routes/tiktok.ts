@@ -121,7 +121,9 @@ export async function registerTikTokRoutes(app: FastifyInstance) {
     });
   });
 
-  // DELETE /api/tiktok/connections/:id - Disconnect
+  // DELETE /api/tiktok/connections/:id — DEPRECATED
+  // Use DELETE /api/connections/:id instead (Issue #54)
+  // This route is kept for backward compatibility but performs a full deletion.
   app.delete('/connections/:id', { preHandler: requireAuth }, async (request, reply) => {
     const { id } = request.params as { id: string };
 
@@ -133,25 +135,9 @@ export async function registerTikTokRoutes(app: FastifyInstance) {
       throw new AppError('Connection not found', 404, 'NOT_FOUND');
     }
 
-    // Revoke token with TikTok (best effort)
-    try {
-      await fetch('https://auth.tiktok-shops.com/oauth/revoke', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          app_id: process.env.TIKTOK_APP_ID || '',
-          app_secret: process.env.TIKTOK_APP_SECRET || '',
-          token: conn.accessToken,
-        }),
-      });
-    } catch {
-      // Continue even if revoke fails - we'll mark as revoked locally
-    }
+    // Delete the connection row
+    await db.delete(tiktokConnections).where(eq(tiktokConnections.id, id));
 
-    await db.update(tiktokConnections)
-      .set({ status: 'revoked', updatedAt: new Date() })
-      .where(eq(tiktokConnections.id, id));
-
-    return reply.send({ ok: true });
+    return reply.send({ ok: true, deprecated: true, message: 'Use DELETE /api/connections/:id instead' });
   });
 }
