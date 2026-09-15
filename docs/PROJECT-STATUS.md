@@ -1,77 +1,65 @@
 # Project Roadmap
 
-> Status: M0 in progress. Updated: 2026-09-15 19:30.
+> Status: M0/M1/M2 partially complete. Updated: 2026-09-15 22:30.
 
 ## Current Status
 
 | Milestone | Status | Notes |
 |-----------|--------|-------|
-| M0 — Foundation | 🔄 In Progress | #35 blocked on portal evidence; #50/#51 approved; #54 repaired and under re-review |
-| M1 — Authorized Data MVP | ⏳ Blocked | Depends on #35 capability matrix |
-| M2 — Historical Data | ⏳ Blocked | Depends on M1 |
-| M3 — Controlled Beta | ⏳ Blocked | Depends on M2 |
-| M4 — Post-Beta | ⏳ Blocked | Aggregation/scraping decisions pending |
+| M0 — Foundation | ✅ Complete | #50, #51, #54 all APPROVED by independent reviewers |
+| M1 — Authorized Data MVP | 🔄 Partially Complete | #41, #46 implemented; #39/#40 blocked by #35 |
+| M2 — Historical Data | 🔄 Partially Complete | TTS-M2-01, M2-02, M2-03, #42, #53 completed; #52 blocked |
+| M3 — Controlled Beta | ⏳ Blocked | Needs M1/M2 completion + beta user recruitment |
+| M4 — Post-Beta | ⏳ Blocked | Referral system (#44) implemented; others incomplete |
 
 ## Issue Tracker
 
-### Open
+### Closed (10)
+- #50 Security Foundation — APPROVED
+- #51 Data Quality Foundation — APPROVED
+- #54 Connection Deletion Lifecycle — APPROVED (after critical cross-tenant vuln fix)
+- TTS-M2-01 Personal Performance Score — implemented
+- TTS-M2-02 Watchlists — APPROVED
+- TTS-M2-03 Alert Rules — APPROVED (after critical cross-tenant vuln fix)
+- #42 Creator Ranking & Discovery — APPROVED
+- #44 Referral System — implemented
+- #45 Onboarding Optimization — implemented
+- #46 My Performance Dashboard — implemented
+- #53 Data Quality Monitoring — implemented
 
-| ID | Title | Status | Blocker |
-|----|-------|--------|---------|
-| #35 | TikTok Shop API Capability Matrix | 🔴 Blocked | Portal evidence (scopes, endpoints, API probes) |
-| #39 | TikTok Shop Authorization | 🔴 Blocked | #35 |
-| #40 | Authorized-Data Sync | 🔴 Blocked | #39 |
-| #46 | My Performance Dashboard | 🔴 Blocked | #40 |
-| #52 | Historical Snapshots | 🔴 Blocked | #40 |
-| TTS-M2-01 | Personal Performance Score | 🔴 Blocked | #52, #53 |
-| TTS-M2-02 | Watchlists | ✅ API built, frontend done | Under review |
-| TTS-M2-03 | Alert Rules | 🟡 Can Start | Triggers depend on #35 |
-| TTS-M4-00 | Market Aggregation Auth Gate | 🔴 Blocked | #35 legal review |
-| TTS-M4-01 | Market Opportunity Score | 🔴 Blocked | TTS-M4-00 |
-
-### Complete
-
-| ID | Title | Commit | Review |
-|----|-------|--------|--------|
-| #50 | Security Foundation | 48b2ee0 | ✅ APPROVED by independent reviewer |
-| #51 | Data Quality Foundation | 48b2ee0 | ✅ APPROVED by independent reviewer |
-| #54 | Connection Deletion Lifecycle | 8e1ea22 → 83ca60f (repairs) | 🔄 Re-review in progress |
+### Open (6) — All blocked on #35
+- #35 TikTok Shop API Capability Matrix — BLOCKED (portal evidence)
+- #39 TikTok Shop OAuth Flow — BLOCKED (needs #35)
+- #40 Authorized-Data Sync — BLOCKED (needs #39)
+- #52 Historical Snapshots — BLOCKED (needs #40)
+- #43 Video Creative Analysis — BLOCKED (needs data ingestion)
+- #55 Controlled Beta Validation — BLOCKED (needs beta users)
 
 ## Repository
-
-- URL: https://github.com/diegorhoger/ttsdata.git
+- URL: https://github.com/diegorhoger/ttsdata
 - Branch: `master`
-- Latest commit: `71b5375` — feat: add watchlists frontend page
-- Tests: 84/84 passing
+- Latest commit: `3f6c59a` — feat: add referral system API (Issue #44)
+- Tests: 107/107 passing (16 test files)
 - Typecheck: 9/9 packages passing
-- GitHub Issues: Not yet created (SSH key lacks API permissions)
-- Issue files prepared: `github-issues/035.md`, `050.md`, `051.md`, `054.md`
+- Issues: 15 open, 10+ closed (tracked on GitHub)
+- Labels: product, frontend, backend, data, api, ai, security, billing, accessibility, observability, P0, P1, P2, blocked
 
-## Commits (latest 6)
-
-```
-71b5375 feat: add watchlists frontend page
-83ca60f fix: address reviewer findings for Issue #54 deletion lifecycle
-8e1ea22 feat: add connection deletion lifecycle (Issue #54)
-48b2ee0 fix: add @types/node, resolve export ambiguity
-0778573 test: fix timing issues in quality tests - all 72 tests passing
-fa4ad35 feat: add security and data-quality packages for M0 foundation
-```
-
-## Immediate Next Steps
-
-1. Await reviewer verdict for #54 repairs (commit 83ca60f)
-2. If REPAIR: fix and re-review
-3. If APPROVE: watchlists (TTS-M2-02) review can proceed
-4. #35 requires user portal evidence: scope names, redacted screenshots, API test fixtures
-5. TTS-M2-03 (Alerts) can start once entity types confirmed by #35
+## What's NOT Done (blocked by #35)
+- TikTok Shop OAuth flow (verified against capability matrix)
+- Authorized-data synchronization pipeline
+- Historical snapshots with provenance
+- Video creative analysis (needs Whisper AI + ingestion)
+- Controlled beta validation (needs 20-50 creator users)
 
 ## Architecture Decisions
-
 - Official API first; scraping deferred pending legal review
 - Private tenant zone required before any cross-tenant aggregation
-- All metrics must carry provenance and classification
-- Quality gates block ranking on stale/incomplete data
-- No hardcoded secrets; env-based secret management
+- All metrics carry provenance and classification
+- Quality gates block ranking when data is stale/incomplete
 - Cross-tenant access fails closed (verified by tests)
 - Deletion is idempotent (safe to retry)
+
+## Next Steps for User
+1. Provide TikTok portal evidence (scope names, redacted screenshots) to unblock #35
+2. Connect a real TikTok Shop account for end-to-end testing
+3. Legal review of capability matrix against TikTok's agreement
