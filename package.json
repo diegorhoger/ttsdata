@@ -1,0 +1,27 @@
+{
+  "name": "ttsdata",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "db:migrate": "pnpm --filter @ttsdata/db migrate",
+    "db:generate": "pnpm --filter @ttsdata/db generate",
+    "worker": "pnpm --filter @ttsdata/worker dev",
+    "web": "pnpm --filter @ttsdata/web dev",
+    "api": "pnpm --filter @ttsdata/api dev"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.0",
+    "typescript": "^5.4.0"
+  },
+  "packageManager": "pnpm@9.0.0",
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
