@@ -57,10 +57,12 @@ describe('Quality', () => {
 
   describe('generateQualityReport', () => {
     it('generates passing report for good data', () => {
-      const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000);
+      // explicit config: maxAgeHours=9999 effectively disables the freshness gate
       const report = generateQualityReport(
         'product', '123',
-        twelveHoursAgo, 10, 10, 100, 100
+        new Date('2026-09-14T18:00:00.000Z'),
+        10, 10, 100,
+        { maxAgeHours: 9999, minCompleteness: 0.8, minAccuracy: 0.9 }
       );
       expect(report.overallStatus).toBe('pass');
       expect(report.dimensions).toHaveLength(3);
