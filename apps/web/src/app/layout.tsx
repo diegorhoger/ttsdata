@@ -23,6 +23,7 @@ export default function RootLayout({
               <a href="/products" className="hover:text-sky-600">Produtos</a>
               <a href="/today" className="hover:text-sky-600">Hoje</a>
               <a href="/watchlists" className="hover:text-sky-600">Watchlists</a>
+              <a href="/alerts" className="hover:text-sky-600">Alertas</a>
               <a href="/settings" className="hover:text-sky-600">Configurações</a>
             </nav>
             <div className="flex gap-3">
