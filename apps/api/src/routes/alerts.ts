@@ -4,7 +4,7 @@
 
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { eq, desc } from 'drizzle-orm';
+import { eq, and, desc } from 'drizzle-orm';
 import { db } from '../lib/db';
 import { alertRules, alertHistory } from '@ttsdata/db/src/schema';
 import { requireAuth } from '../lib/auth';
@@ -25,6 +25,8 @@ const createAlertSchema = z.object({
   deliveryChannels: z.array(z.enum(['in_app', 'email'])).default(['in_app']),
   active: z.boolean().default(true),
 });
+
+const updateAlertSchema = createAlertSchema.partial();
 
 export async function registerAlertRoutes(app: FastifyInstance) {
 
@@ -85,7 +87,7 @@ export async function registerAlertRoutes(app: FastifyInstance) {
   app.patch('/rules/:id', { preHandler: requireAuth }, async (request, reply) => {
     const auth = request.auth!;
     const { id } = request.params as { id: string };
-    const body = createAlertSchema.partial().parse(request.body);
+    const body = updateAlertSchema.parse(request.body);
 
     const rule = await db.query.alertRules.findFirst({
       where: eq(alertRules.id, id),
@@ -103,13 +105,16 @@ export async function registerAlertRoutes(app: FastifyInstance) {
     return reply.send({ rule: updated });
   });
 
-  // DELETE /api/alerts/rules/:id — Delete rule
+  // DELETE /api/alerts/rules/:id — Delete rule (workspace-scoped)
   app.delete('/rules/:id', { preHandler: requireAuth }, async (request, reply) => {
     const auth = request.auth!;
     const { id } = request.params as { id: string };
 
     const result = await db.delete(alertRules).where(
-      eq(alertRules.id, id)
+      and(
+        eq(alertRules.id, id),
+        eq(alertRules.workspaceId, auth.workspaceId)
+      )
     ).returning();
 
     if (!result || result.length === 0) {
