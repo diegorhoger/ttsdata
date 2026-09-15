@@ -16,6 +16,7 @@ import { registerConnectionRoutes } from './routes/connections';
 import { registerWatchlistRoutes } from './routes/watchlists';
 import { registerAlertRoutes } from './routes/alerts';
 import { registerCreatorRoutes } from './routes/creators';
+import { registerTodayRoutes } from './routes/today';
 import { registerHealthRoutes } from './routes/health';
 import { errorHandler } from './lib/errors';
 
@@ -78,6 +79,9 @@ async function buildServer() {
 
   // Creator discovery routes
   await app.register(registerCreatorRoutes, { prefix: '/api/creators' });
+
+  // Today opportunity feed
+  await app.register(registerTodayRoutes, { prefix: '/api/today' });
 
   return app;
 }
