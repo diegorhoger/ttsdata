@@ -158,6 +158,10 @@ importers:
       typescript:
         specifier: ^5.4.0
         version: 5.9.3
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.0
+        version: 20.19.43
 
   packages/db:
     dependencies:
@@ -189,6 +193,10 @@ importers:
       typescript:
         specifier: ^5.4.0
         version: 5.9.3
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.0
+        version: 20.19.43
 
   packages/shared:
     dependencies:
