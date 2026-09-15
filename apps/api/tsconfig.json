@@ -15,6 +15,9 @@
       ],
       "@ttsdata/db": [
         "../../packages/db/src"
+      ],
+      "@ttsdata/data-quality": [
+        "../../packages/data-quality/src"
       ]
     }
   },

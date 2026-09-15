@@ -17,6 +17,7 @@ import { registerWatchlistRoutes } from './routes/watchlists';
 import { registerAlertRoutes } from './routes/alerts';
 import { registerCreatorRoutes } from './routes/creators';
 import { registerTodayRoutes } from './routes/today';
+import { registerDataQualityRoutes } from './routes/dataQuality';
 import { registerHealthRoutes } from './routes/health';
 import { errorHandler } from './lib/errors';
 
@@ -82,6 +83,9 @@ async function buildServer() {
 
   // Today opportunity feed
   await app.register(registerTodayRoutes, { prefix: '/api/today' });
+
+  // Data quality monitoring
+  await app.register(registerDataQualityRoutes, { prefix: '/api/data-quality' });
 
   return app;
 }
