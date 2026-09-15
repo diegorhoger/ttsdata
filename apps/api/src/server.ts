@@ -19,6 +19,7 @@ import { registerCreatorRoutes } from './routes/creators';
 import { registerTodayRoutes } from './routes/today';
 import { registerDataQualityRoutes } from './routes/dataQuality';
 import { registerPersonalScoreRoutes } from './routes/personalScore';
+import { registerOnboardingRoutes } from './routes/onboarding';
 import { registerHealthRoutes } from './routes/health';
 import { errorHandler } from './lib/errors';
 
@@ -90,6 +91,9 @@ async function buildServer() {
 
   // Personal Performance Score
   await app.register(registerPersonalScoreRoutes, { prefix: '/api/personal-score' });
+
+  // Onboarding
+  await app.register(registerOnboardingRoutes, { prefix: '/api/onboarding' });
 
   return app;
 }
