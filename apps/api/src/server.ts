@@ -12,6 +12,7 @@ import rateLimit from '@fastify/rate-limit';
 import { registerAuthRoutes } from './routes/auth';
 import { registerProductRoutes } from './routes/products';
 import { registerTikTokRoutes } from './routes/tiktok';
+import { registerConnectionRoutes } from './routes/connections';
 import { registerHealthRoutes } from './routes/health';
 import { errorHandler } from './lib/errors';
 
@@ -62,6 +63,9 @@ async function buildServer() {
 
   // TikTok routes
   await app.register(registerTikTokRoutes, { prefix: '/api/tiktok' });
+
+  // Connection deletion routes
+  await app.register(registerConnectionRoutes, { prefix: '/api/connections' });
 
   return app;
 }
