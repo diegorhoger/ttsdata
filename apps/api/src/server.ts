@@ -18,6 +18,7 @@ import { registerAlertRoutes } from './routes/alerts';
 import { registerCreatorRoutes } from './routes/creators';
 import { registerTodayRoutes } from './routes/today';
 import { registerDataQualityRoutes } from './routes/dataQuality';
+import { registerPersonalScoreRoutes } from './routes/personalScore';
 import { registerHealthRoutes } from './routes/health';
 import { errorHandler } from './lib/errors';
 
@@ -86,6 +87,9 @@ async function buildServer() {
 
   // Data quality monitoring
   await app.register(registerDataQualityRoutes, { prefix: '/api/data-quality' });
+
+  // Personal Performance Score
+  await app.register(registerPersonalScoreRoutes, { prefix: '/api/personal-score' });
 
   return app;
 }
