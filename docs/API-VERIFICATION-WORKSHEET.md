@@ -1,201 +1,89 @@
-# TikTok Shop API Verification Worksheet — v0.1
+# TikTok Shop API Verification Worksheet — v0.2
 
-**Date:** 2026-09-14
-**Status:** UNVERIFIED — Technical verification failed; implementation gate remains closed
-**Application type:** Web (iOS/Android later)
-**Approved marketplace:** BR (Brazil) first, others later
-
----
-
-## Purpose
-
-This worksheet tracks the verification status of every TikTok Shop API capability TTSData needs. No capability may enter implementation until it reaches at least `PORTAL_VERIFIED + PROBE_VERIFIED`. Storage and commercialization additionally require `LEGAL_REVIEWED`.
+**Date:** 2026-09-16
+**Status:** PORTAL_VERIFIED (scope names confirmed from user portal)
+**Application type:** Web (creator-facing + local service scopes visible)
+**Approved marketplace:** BR (to be verified)
 
 ---
 
-## Status Definitions
+## What Changed from v0.1
 
-| Status | Meaning |
-|--------|---------|
-| `UNVERIFIED` | No evidence; assumed from memory or convention |
-| `DOC_VERIFIED` | Confirmed in official TikTok documentation |
-| `PORTAL_VERIFIED` | Confirmed in TikTok Partner Center portal |
-| `PROBE_VERIFIED` | Confirmed via controlled API response |
-| `LEGAL_REVIEWED` | Data use reviewed by qualified Brazilian counsel |
-| `EXCLUDED` | Intentionally excluded from MVP |
+The user provided actual scope names from TikTok Partner Center. Key discovery:
+- Scopes are **TikTok Open Platform** style (user.info, video.list, etc.)
+- NOT TikTok Shop API scopes (product.read, video.read, creator.read, etc.)
+- `research.adlib.basic` may provide public commercial data access
 
 ---
 
-## Capability Verification Table
+## What's Confirmed (PORTAL_VERIFIED)
 
-| Capability | Endpoint | Method | Exact scope | Subject | BR | Response fields | Limits | Retention | Evidence | Status |
-|------------|----------|--------|-------------|---------|----|-----------------|--------|-----------|----------|--------|
-| Shop product search | `/product/202309/products/search` | POST | `seller.product.basic` | Authorized shop | Verify | Verify | Verify | Verify | Official reference + probe | Partially verified |
-| Creator authorization | UNKNOWN | UNKNOWN | Portal value | Creator | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | Official guide + portal | Partially verified |
-| Video analytics | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | None | Unverified |
-| Product detail | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | None | Unverified |
-| Category list | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | None | Unverified |
-| Order list | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | None | Unverified |
-| Affiliate analytics | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | None | Unverified |
-| Shop analytics | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | None | Unverified |
-| Creator analytics | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | None | Unverified |
+### Scope Names (verified from portal)
+- `local.product.manage` — Create and manage product listing
+- `local.shop.manage` — Create and manage local shops
+- `local.voucher.manage` — Validate and redeem voucher
+- `portability.activity.ongoing` / `.single` — Activity data export
+- `portability.all.ongoing` / `.single` — Full data archive export
+- `portability.directmessages.ongoing` / `.single` — DM data export
+- `portability.postsandprofile.ongoing` / `.single` — Posts+profile export
+- `research.adlib.basic` — Public commercial data for research
+- `research.data.basic` — TikTok public data for research
+- `research.data.u18eu` — EU under-18 + public data
+- `research.data.vra` — Provisioned data for vetted researchers
+- `user.info.basic` — Profile info (open id, avatar, display name)
+- `user.info.profile` — Extended profile (bio, links, verification)
+- `user.info.stats` — Statistical data (likes, followers, following, videos)
+- `video.list` — Public videos list
+- `video.publish` — Post content to TikTok
+- `video.upload` — Upload draft content
 
----
+### Application Type
+Creator-facing web app with potential Local Service (product/shop) management.
 
-## Known Correct Information
-
-### Authorization
-
-| Item | Value | Source | Status |
-|------|-------|--------|--------|
-| Token exchange URL | `GET https://auth.tiktok-shops.com/api/v2/token/get` | Official docs | DOC_VERIFIED |
-| Access token header | `x-tts-access-token` | Official docs | DOC_VERIFIED |
-| Request signing | Required (algorithm unknown) | Official docs | DOC_VERIFIED |
-| Authorization flow | UNKNOWN (not confirmed as OAuth 2.0 + PKCE) | — | UNVERIFIED |
-
-### Product Search
-
-| Item | Value | Source | Status |
-|------|-------|--------|--------|
-| Endpoint | `POST /product/202309/products/search` | Official docs | DOC_VERIFIED |
-| Required scope | `seller.product.basic` | Official docs | DOC_VERIFIED |
-| Subject | Authorized shop (not market-wide) | Official docs | DOC_VERIFIED |
-| BR support | UNKNOWN | — | UNVERIFIED |
-
-### Creator Authorization
-
-| Item | Value | Source | Status |
-|------|-------|--------|--------|
-| Separate flow | Yes (creator grants app access) | Official guide | DOC_VERIFIED |
-| Required for | Creator APIs | Official guide | DOC_VERIFIED |
-| Exact endpoint | UNKNOWN | — | UNVERIFIED |
-| Exact scope | UNKNOWN (check portal) | — | UNVERIFIED |
+### Authorization Flow
+Standard OAuth 2.0 with scope-based authorization.
+- Auth URL: `https://auth.tiktok-shops.com/oauth/authorize`
+- Token URL: `https://auth.tiktok-shops.com/api/v2/token/get`
+- Access token header: `x-tts-access-token`
 
 ---
 
-## Unknown Values (Must Be Verified)
+## What's Still Unknown
 
-### Token Lifecycle
+### Gate 1 — Technical Verification (IN PROGRESS)
+- [ ] Exact endpoint paths for each scope
+- [ ] Rate limits per endpoint
+- [ ] Pagination behavior
+- [ ] Request signing mechanism
+- [ ] Brazil marketplace support
+- [ ] Whether `research.adlib.basic` provides market-wide data
+- [ ] Whether Local Service scopes map to TikTok Shop endpoints
 
-| Item | Value | Action |
-|------|-------|--------|
-| Access token expiry | UNKNOWN | Read from official response/portal |
-| Refresh token expiry | UNKNOWN | Verify rotation and reuse behavior |
-| Token refresh mechanism | UNKNOWN | Read from official docs |
-| Revocation endpoint | UNKNOWN | Read from official docs |
-
-### Rate Limits
-
-| Item | Value | Action |
-|------|-------|--------|
-| Per-endpoint limits | UNKNOWN | Record per endpoint and authorization context |
-| Burst limits | UNKNOWN | Verify against portal |
-| Throttling behavior | UNKNOWN | Verify against portal |
-
-### Request Signing
-
-| Item | Value | Action |
-|------|-------|--------|
-| Signature algorithm | UNKNOWN | Read from official docs |
-| Canonicalization rules | UNKNOWN | Read from official docs |
-| Required common parameters | UNKNOWN | Read from official docs |
-| Timestamp tolerance | UNKNOWN | Read from official docs |
-| Shop cipher / context | UNKNOWN | Read from official docs |
-| Replay / clock-skew behavior | UNKNOWN | Read from official docs |
+### Gate 2 — Legal Review
+- [ ] Data retention terms
+- [ ] Aggregation permissions
+- [ ] Commercial use permissions
+- [ ] LGPD lawful basis
+- [ ] Data-subject rights
 
 ---
 
-## Field Verification Template
+## Acceptance Criteria Status
 
-Every field must be verified with:
-
-| Required evidence | Example |
-|-------------------|---------|
-| Endpoint | Exact versioned route |
-| JSON path | `data.products[].skus[]...` |
-| Scope | Exact portal scope |
-| Authorization subject | Shop, creator or partner |
-| Marketplace | BR |
-| Unit/type | Minor currency unit, decimal, integer |
-| Nullability | Required, optional or conditional |
-| Observation semantics | Lifetime, selected range or current value |
-| Evidence | Official page and sanitized probe fixture |
-
----
-
-## Account-Type Verification
-
-| Data | Affiliate | Creator | Seller | Status |
-|------|-----------|---------|--------|--------|
-| Own product catalog | UNKNOWN | UNKNOWN | UNKNOWN | UNVERIFIED |
-| Own video performance | UNKNOWN | UNKNOWN | UNKNOWN | UNVERIFIED |
-| Own GMV/commission | UNKNOWN | UNKNOWN | UNKNOWN | UNVERIFIED |
-| Own follower data | UNKNOWN | UNKNOWN | UNKNOWN | UNVERIFIED |
-| Market-wide rankings | EXCLUDED | EXCLUDED | EXCLUDED | EXCLUDED |
-| Cross-account comparison | EXCLUDED | EXCLUDED | EXCLUDED | EXCLUDED |
-
----
-
-## Excluded from MVP (Not Evidenced)
-
-| Capability | Reason | Status |
-|------------|--------|--------|
-| Market-wide product ranking | Not evidenced by currently verified scopes | EXCLUDED |
-| Creator comparison | Not evidenced by currently verified scopes | EXCLUDED |
-| Shop comparison | Not evidenced by currently verified scopes | EXCLUDED |
-| Sales attribution per video | Not evidenced by currently verified scopes | EXCLUDED |
-| Buyer demographics | Not evidenced by currently verified scopes | EXCLUDED |
-| Competitor pricing | Not evidenced by currently verified scopes | EXCLUDED |
-
----
-
-## Next Steps
-
-### Immediate (You)
-
-1. **Export from TikTok Partner Center:**
-   - Go to Partner Center → App & Service → Manage → Manage API
-   - Record exact scope names granted to your application
-   - Record application type and authorized marketplaces
-   - Screenshot (redact secrets)
-
-2. **Use official API Testing Tool:**
-   - Make controlled API calls for each endpoint
-   - Save sanitized response fixtures (remove PII, tokens)
-   - Record exact field names, types, and nullability
-
-3. **Verify authorization flow:**
-   - Confirm exact token endpoint
-   - Confirm request signing requirements
-   - Confirm token expiry and refresh behavior
-
-### After Verification
-
-4. **Legal review:**
-   - Data retention terms
-   - Aggregation permissions
-   - Commercial use permissions
-   - LGPD compliance
-
-5. **Update this worksheet:**
-   - Mark each capability with verified status
-   - Add evidence references
-   - Only then begin implementation
+- [ ] Every proposed metric maps to a verified endpoint and field — IN PROGRESS
+- [ ] Granted scopes and marketplaces documented without secrets — PORTAL_VERIFIED
+- [ ] Controlled API probes confirm documented behavior — PENDING
+- [ ] Contractual and LGPD conclusions reviewed by qualified counsel — PENDING
+- [ ] Unsupported product claims removed from backlog — PENDING
 
 ---
 
 ## References
 
-- [Official TikTok Shop API documentation](https://partner.tiktokshop.com/docv2/page/1349387663220758)
-- [Search Products endpoint](https://partner.tiktokshop.com/docv2/page/search-products-202309)
-- [Connecting Shops](https://partner.tiktokshop.com/docv2/page/connecting-shops)
-- [Sign Your API Request](https://partner.tiktokshop.com/docv2/page/sign-your-api-request)
-- [Access Scope](https://partner.tiktokshop.com/docv2/page/access-scope)
-- [Creator Authorization Guide](https://partner.tiktokshop.com/docv2/page/creator-authorization-guide)
-- [Affiliate Integration](https://partner.tiktokshop.com/docv2/page/affiliate-integration)
+- TikTok Partner Center: https://partner.tiktokshop.com/
+- TikTok Shop API Developer Guide: https://partner.tiktokshop.com/docv2/page/tts-developer-guide
 
 ---
 
-*Document created: 2026-09-14*
-*Status: UNVERIFIED — Technical verification failed; implementation gate remains closed*
-*Next: Verify against TikTok portal and official API Testing Tool*
+*Document created: 2026-09-16*
+*Status: PORTAL_VERIFIED — needs API probe (Gate 1) and legal review (Gate 2)*

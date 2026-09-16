@@ -7,6 +7,7 @@ import { Queue, Worker } from 'bullmq';
 import { Redis } from 'ioredis';
 import { db } from './lib/db';
 import { runScoringPipeline } from './jobs/runScoring';
+import { ingestCreators } from './jobs/ingestCreators';
 import { ingestProducts } from './jobs/ingestProducts';
 import { ingestSnapshots } from './jobs/ingestSnapshots';
 import { calculateTrendSignals } from './jobs/calculateTrends';
@@ -22,6 +23,8 @@ const ingestionWorker = new Worker('ingestion', async (job) => {
   console.log(`Processing job ${job.name}...`);
   
   switch (job.name) {
+    case 'ingest-creators':
+      return await ingestCreators(job.data);
     case 'ingest-products':
       return await ingestProducts(job.data);
     case 'ingest-snapshots':
@@ -43,6 +46,16 @@ const scoringWorker = new Worker('scoring', async (job) => {
 
 // Schedule recurring jobs
 async function scheduleJobs() {
+  // Creator ingestion every 8 hours
+  await ingestionQueue.add('ingest-creators', {
+    marketplace: 'BR',
+    accessToken: process.env.TIKTOK_ACCESS_TOKEN || '',
+    openIds: (process.env.TIKTOK_CREATOR_OPEN_IDS || '').split(',').filter(Boolean),
+  }, {
+    repeat: { pattern: '0 */8 * * *' },
+    jobId: 'ingest-creators-br',
+  });
+
   // Product ingestion every 6 hours
   await ingestionQueue.add('ingest-products', { marketplace: 'BR' }, {
     repeat: { pattern: '0 */6 * * *' },
