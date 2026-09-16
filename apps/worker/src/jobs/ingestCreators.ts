@@ -31,28 +31,27 @@ export async function ingestCreators(data: IngestCreatorsData) {
   for (const openId of data.openIds) {
     try {
       // Fetch creator profile (user.info.basic)
-      const userInfo = await client.getUserInfo(data.accessToken, openId);
-      const user = data.user?.data || {};
+      const userInfo = await client.getUserInfo(data.accessToken, openId) as any;
+      const user = userInfo?.data || {};
 
       // Upsert creator record
+      const now = new Date();
       await db.insert(creators).values({
         id: user.open_id || openId,
         displayName: user.display_name || 'Unknown',
         avatarUrl: user.avatar_url || null,
         followerCount: user.follower_count || 0,
-        videoCount: user.video_count || 0,
         affiliateStatus: user.is_verified ? 'active' : 'unknown',
         marketplace: data.marketplace,
-        createdAt: new Date(),
-        updatedAt: new Date(),
+        createdAt: now,
+        updatedAt: now,
       }).onConflictDoUpdate({
         target: creators.id,
         set: {
           displayName: user.display_name || 'Unknown',
           avatarUrl: user.avatar_url || null,
           followerCount: user.follower_count || 0,
-          videoCount: user.video_count || 0,
-          updatedAt: new Date(),
+          updatedAt: now,
         },
       });
 
@@ -69,21 +68,21 @@ export async function ingestCreators(data: IngestCreatorsData) {
           openId,
           cursor,
           videoBatchSize,
-        );
+        ) as any;
 
         const videoItems = videoList?.data?.videos || [];
 
         for (const v of videoItems) {
           await db.insert(videos).values({
             id: v.video_id || `${openId}_${v.create_time}`,
+            productId: v.product_id || openId,
+            creatorId: openId,
             title: v.title || '',
             thumbnailUrl: v.cover_url || null,
-            videoUrl: v.video_url || null,
             duration: v.duration || 0,
             likeCount: v.like_count || 0,
             shareCount: v.share_count || 0,
             viewCount: v.view_count || 0,
-            creatorId: openId,
             publishedAt: new Date(v.create_time || Date.now()),
           }).onConflictDoNothing();
 
