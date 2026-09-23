@@ -1,11 +1,11 @@
 [build]
+  base = "apps/web"
   command = "pnpm build"
-  publish = "apps/web/.next"
+  publish = ".next"
 
 [build.environment]
   NODE_VERSION = "20"
+  NPM_FLAGS = "--no-frozen-lockfile"
 
-[[redirects]]
-  from = "/*"
-  to = "/.netlify/functions/next"
-  status = 200
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
