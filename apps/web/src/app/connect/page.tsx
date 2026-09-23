@@ -1,11 +1,5 @@
 "use client";
 
-import { Metadata } from "next";
-
-export const metadata: Metadata = {
-  title: "Conectar TikTok - TTSData",
-  description: "Conecte sua conta TikTok para acessar análises de performance.",
-};
 
 /**
  * TikTok Connect Page - Verification Only
