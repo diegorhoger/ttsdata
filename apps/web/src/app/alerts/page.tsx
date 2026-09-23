@@ -1,3 +1,5 @@
+"use client";
+
 /**
  * Alerts page — View alert rules and history
  */

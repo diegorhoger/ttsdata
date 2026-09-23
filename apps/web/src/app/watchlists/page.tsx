@@ -1,3 +1,5 @@
+"use client";
+
 /**
  * Watchlists page — View and manage saved products, creators, shops, videos
  */

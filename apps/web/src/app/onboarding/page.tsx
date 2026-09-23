@@ -1,3 +1,5 @@
+"use client";
+
 /**
  * Onboarding page — guides user through TikTok Shop connection
  * 
