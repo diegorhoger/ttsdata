@@ -8,8 +8,8 @@
  * No data is collected until the user explicitly authorizes.
  */
 export default function TikTokConnectPage() {
-  const clientId = process.env.TIKTOK_CLIENT_KEY;
-  const redirectUri = process.env.TIKTOK_REDIRECT_URI || "http://localhost:3000/api/auth/tiktok/callback";
+  const clientId = process.env.NEXT_PUBLIC_TIKTOK_CLIENT_KEY;
+  const redirectUri = process.env.NEXT_PUBLIC_TIKTOK_REDIRECT_URI || "http://localhost:3000/api/auth/tiktok/callback";
   
   // Generate a random state parameter for CSRF protection
   const state = Math.random().toString(36).substring(7);
