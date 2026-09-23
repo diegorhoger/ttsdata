@@ -1,0 +1,13 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "buildCommand": "pnpm build",
+  "installCommand": "pnpm install",
+  "outputDirectory": ".next",
+  "regions": ["gru1"],
+  "env": {
+    "TIKTOK_CLIENT_KEY": "@tiktok-client-key",
+    "TIKTOK_CLIENT_SECRET": "@tiktok-client-secret",
+    "TIKTOK_REDIRECT_URI": "@tiktok-redirect-uri"
+  }
+}
