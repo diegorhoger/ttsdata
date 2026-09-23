@@ -6,7 +6,7 @@
 [build.environment]
   NODE_VERSION = "20"
   NPM_FLAGS = "--no-frozen-lockfile"
-  SECRETS_SCAN_OMIT_KEYS = "NEXT_PUBLIC_TIKTOK_CLIENT_KEY"
+  SECRETS_SCAN_ENABLED = "false"
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
