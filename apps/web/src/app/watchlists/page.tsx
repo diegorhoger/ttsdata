@@ -1,5 +1,7 @@
 "use client";
 
+import { useState, useEffect } from "react";
+
 /**
  * Watchlists page — View and manage saved products, creators, shops, videos
  */
@@ -17,21 +19,6 @@ interface Watchlist {
     notes: string | null;
     tags: string[];
   }>;
-}
-
-interface WatchlistsResponse {
-  watchlists: Watchlist[];
-}
-
-async function getWatchlists(): Promise<WatchlistsResponse> {
-  const res = await fetch('/api/watchlists', {
-    credentials: 'include',
-    cache: 'no-store',
-  });
-  if (!res.ok) {
-    return { watchlists: [] };
-  }
-  return res.json();
 }
 
 function getEntityLabel(type: string): string {
@@ -52,8 +39,46 @@ function formatDate(dateStr: string): string {
   }).format(new Date(dateStr));
 }
 
-export default async function WatchlistsPage() {
-  const { watchlists } = await getWatchlists();
+export default function WatchlistsPage() {
+  const [watchlists, setWatchlists] = useState<Watchlist[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const res = await fetch('/api/watchlists', { credentials: 'include', cache: 'no-store' });
+        const data = await res.json();
+        setWatchlists(data.watchlists || []);
+      } catch (err) {
+        console.error('Failed to load watchlists:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
+  }, []);
+
+  const handleCreate = () => {
+    const name = prompt('Nome da watchlist:');
+    if (!name) return;
+    fetch('/api/watchlists', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ name }),
+    }).then(() => window.location.reload());
+  };
+
+  if (loading) {
+    return (
+      <div className="mx-auto max-w-7xl px-4 py-8">
+        <div className="animate-pulse space-y-4">
+          <div className="h-8 w-48 bg-slate-200 rounded"></div>
+          <div className="h-64 bg-slate-100 rounded-xl"></div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8">
@@ -66,16 +91,7 @@ export default async function WatchlistsPage() {
         </div>
         <button
           className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700"
-          onClick={() => {
-            const name = prompt('Nome da watchlist:');
-            if (!name) return;
-            fetch('/api/watchlists', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              credentials: 'include',
-              body: JSON.stringify({ name }),
-            }).then(() => window.location.reload());
-          }}
+          onClick={handleCreate}
         >
           Nova Watchlist
         </button>
@@ -92,16 +108,7 @@ export default async function WatchlistsPage() {
           </p>
           <button
             className="rounded-lg bg-sky-600 px-6 py-3 font-medium text-white hover:bg-sky-700"
-            onClick={() => {
-              const name = prompt('Nome da watchlist:');
-              if (!name) return;
-              fetch('/api/watchlists', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({ name }),
-              }).then(() => window.location.reload());
-            }}
+            onClick={handleCreate}
           >
             Criar primeira watchlist
           </button>
@@ -137,7 +144,7 @@ export default async function WatchlistsPage() {
                 </button>
               </div>
 
-              {wl.items.length > 0 ? (
+              {wl.items && wl.items.length > 0 ? (
                 <div className="grid gap-2">
                   {wl.items.map((item) => (
                     <div
@@ -158,7 +165,7 @@ export default async function WatchlistsPage() {
                         )}
                       </div>
                       <div className="flex items-center gap-2">
-                        {item.tags.map((tag) => (
+                        {item.tags && item.tags.map((tag) => (
                           <span
                             key={tag}
                             className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600"

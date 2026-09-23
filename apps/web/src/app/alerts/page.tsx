@@ -1,5 +1,7 @@
 "use client";
 
+import { useState, useEffect } from "react";
+
 /**
  * Alerts page — View alert rules and history
  */
@@ -25,29 +27,6 @@ interface AlertHistoryItem {
   createdAt: string;
 }
 
-interface AlertsResponse {
-  rules: AlertRule[];
-  history: AlertHistoryItem[];
-}
-
-async function getAlerts(): Promise<AlertsResponse> {
-  const res = await fetch('/api/alerts/rules', {
-    credentials: 'include',
-    cache: 'no-store',
-  });
-  if (!res.ok) return { rules: [], history: [] };
-  const rulesData = await res.json();
-
-  const histRes = await fetch('/api/alerts/history', {
-    credentials: 'include',
-    cache: 'no-store',
-  });
-  if (!histRes.ok) return { rules: rulesData.rules, history: [] };
-  const historyData = await histRes.json();
-
-  return { rules: rulesData.rules, history: historyData.history };
-}
-
 function formatDate(dateStr: string): string {
   return new Intl.DateTimeFormat('pt-BR', {
     day: '2-digit',
@@ -58,8 +37,56 @@ function formatDate(dateStr: string): string {
   }).format(new Date(dateStr));
 }
 
-export default async function AlertsPage() {
-  const { rules, history } = await getAlerts();
+export default function AlertsPage() {
+  const [rules, setRules] = useState<AlertRule[]>([]);
+  const [history, setHistory] = useState<AlertHistoryItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const [rulesRes, histRes] = await Promise.all([
+          fetch('/api/alerts/rules', { credentials: 'include', cache: 'no-store' }),
+          fetch('/api/alerts/history', { credentials: 'include', cache: 'no-store' }),
+        ]);
+        const rulesData = await rulesRes.json();
+        const historyData = await histRes.json();
+        setRules(rulesData.rules || []);
+        setHistory(historyData.history || []);
+      } catch (err) {
+        console.error('Failed to load alerts:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
+  }, []);
+
+  const handleCreateRule = () => {
+    const name = prompt('Nome do alerta:');
+    if (!name) return;
+    const triggerType = prompt(
+      'Tipo: score_threshold | momentum | commission_change | price_change | saturation | new_content'
+    );
+    if (!triggerType) return;
+    fetch('/api/alerts/rules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ name, triggerType, conditions: {}, cooldownMinutes: 60, deliveryChannels: ['in_app'] }),
+    }).then(() => window.location.reload());
+  };
+
+  if (loading) {
+    return (
+      <div className="mx-auto max-w-7xl px-4 py-8">
+        <div className="animate-pulse space-y-4">
+          <div className="h-8 w-48 bg-slate-200 rounded"></div>
+          <div className="h-64 bg-slate-100 rounded-xl"></div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8">
@@ -72,27 +99,13 @@ export default async function AlertsPage() {
         </div>
         <button
           className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700"
-          onClick={() => {
-            const name = prompt('Nome do alerta:');
-            if (!name) return;
-            const triggerType = prompt(
-              'Tipo: score_threshold | momentum | commission_change | price_change | saturation | new_content'
-            );
-            if (!triggerType) return;
-            fetch('/api/alerts/rules', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              credentials: 'include',
-              body: JSON.stringify({ name, triggerType, conditions: {}, cooldownMinutes: 60, deliveryChannels: ['in_app'] }),
-            }).then(() => window.location.reload());
-          }}
+          onClick={handleCreateRule}
         >
           Novo Alerta
         </button>
       </div>
 
       <div className="grid lg:grid-cols-2 gap-8">
-        {/* Rules */}
         <div>
           <h2 className="text-xl font-bold text-slate-900 mb-4">Regras de Alerta</h2>
           {rules.length === 0 ? (
@@ -130,7 +143,6 @@ export default async function AlertsPage() {
           )}
         </div>
 
-        {/* History */}
         <div>
           <h2 className="text-xl font-bold text-slate-900 mb-4">Histórico</h2>
           {history.length === 0 ? (
