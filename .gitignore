@@ -29,3 +29,4 @@ Thumbs.db
 logs/
 *.log
 npm-debug.log*
+apps/web/tsconfig.tsbuildinfo
