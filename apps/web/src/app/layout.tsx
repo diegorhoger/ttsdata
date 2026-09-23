@@ -25,6 +25,7 @@ export default function RootLayout({
               <a href="/watchlists" className="hover:text-sky-600">Watchlists</a>
               <a href="/alerts" className="hover:text-sky-600">Alertas</a>
               <a href="/onboarding" className="hover:text-sky-600">Onboarding</a>
+              <a href="/connect" className="hover:text-sky-600">Conectar TikTok</a>
               <a href="/settings" className="hover:text-sky-600">Configurações</a>
             </nav>
             <div className="flex gap-3">
@@ -39,8 +40,12 @@ export default function RootLayout({
         </header>
         <main>{children}</main>
         <footer className="border-t border-slate-200 bg-white mt-12">
-          <div className="mx-auto max-w-7xl px-4 py-6 text-center text-sm text-slate-500">
-            TTSData &copy; 2024. Dados oficiais da TikTok Shop API.
+          <div className="mx-auto max-w-7xl px-4 py-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-slate-500">
+            <p>TTSData &copy; 2024. Dados oficiais da TikTok Display API.</p>
+            <div className="flex gap-4">
+              <a href="/terms" className="hover:text-sky-600">Termos de Serviço</a>
+              <a href="/privacy" className="hover:text-sky-600">Política de Privacidade</a>
+            </div>
           </div>
         </footer>
       </body>
