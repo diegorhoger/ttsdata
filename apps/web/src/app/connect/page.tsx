@@ -37,12 +37,37 @@ export default function TikTokConnectPage() {
     window.location.href = authUrl.toString();
   };
 
+  // Check for success/error from OAuth callback
+  const [oauthResult, setOauthResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const success = params.get('success');
+    const error = params.get('error');
+    const scope = params.get('scope');
+    const description = params.get('description');
+
+    if (success) {
+      setOauthResult({ type: 'success', message: `Autorização concluída! Escopos: ${scope || 'N/A'}` });
+    } else if (error) {
+      setOauthResult({ type: 'error', message: `Erro: ${error}${description ? ' - ' + description : ''}` });
+    }
+  }, []);
+
   return (
     <div className="mx-auto max-w-2xl px-4 py-16">
       <section className="text-center">
         <h1 className="text-4xl font-bold text-slate-900 mb-6">
           Conecte sua conta TikTok
         </h1>
+
+        {oauthResult && (
+          <div className={`mb-8 rounded-xl p-6 ${oauthResult.type === 'success' ? 'bg-emerald-50 border border-emerald-200' : 'bg-red-50 border border-red-200'}`}>
+            <p className={`font-medium ${oauthResult.type === 'success' ? 'text-emerald-800' : 'text-red-800'}`}>
+              {oauthResult.type === 'success' ? '✅' : '❌'} {oauthResult.message}
+            </p>
+          </div>
+        )}
         <p className="text-lg text-slate-600 mb-8">
           Para acessar suas análises de performance, precisamos da sua autorização
           para ler seu perfil público e lista de vídeos através da TikTok Display API.

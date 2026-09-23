@@ -19,22 +19,19 @@ export async function GET(request: NextRequest) {
   // Handle OAuth errors
   if (error) {
     console.error(`TikTok OAuth error: ${error} - ${errorDescription}`);
-    return NextResponse.json(
-      { success: false, error, errorDescription },
-      { status: 400 }
+    return NextResponse.redirect(
+      new URL(`/connect?error=${encodeURIComponent(error)}&description=${encodeURIComponent(errorDescription || '')}`, request.url)
     );
   }
 
   // Validate required parameters
   if (!code) {
-    return NextResponse.json(
-      { success: false, error: 'missing_code' },
-      { status: 400 }
+    return NextResponse.redirect(
+      new URL('/connect?error=missing_code', request.url)
     );
   }
 
   // Verify state parameter to prevent CSRF
-  // In production, compare against stored state from the authorization request
   if (!state) {
     console.warn('Missing state parameter in OAuth callback');
   }
@@ -48,11 +45,11 @@ export async function GET(request: NextRequest) {
         'Content-Type': 'application/x-www-form-urlencoded',
       },
       body: new URLSearchParams({
-        client_key: process.env.TIKTOK_CLIENT_KEY || '',
+        client_key: process.env.NEXT_PUBLIC_TIKTOK_CLIENT_KEY || '',
         client_secret: process.env.TIKTOK_CLIENT_SECRET || '',
         code,
         grant_type: 'authorization_code',
-        redirect_uri: process.env.TIKTOK_REDIRECT_URI || '',
+        redirect_uri: process.env.NEXT_PUBLIC_TIKTOK_REDIRECT_URI || '',
       }),
     });
 
@@ -60,9 +57,8 @@ export async function GET(request: NextRequest) {
 
     if (!tokenResponse.ok) {
       console.error('Token exchange failed:', tokenData);
-      return NextResponse.json(
-        { success: false, error: 'token_exchange_failed', details: tokenData },
-        { status: tokenResponse.status }
+      return NextResponse.redirect(
+        new URL(`/connect?error=token_exchange_failed&details=${encodeURIComponent(JSON.stringify(tokenData))}`, request.url)
       );
     }
 
@@ -72,20 +68,15 @@ export async function GET(request: NextRequest) {
     console.log('Scope:', tokenData.scope);
     console.log('Expires in:', tokenData.expires_in, 'seconds');
 
-    // Return success without exposing the token
-    return NextResponse.json({
-      success: true,
-      message: 'OAuth flow verified successfully',
-      scope: tokenData.scope,
-      expires_in: tokenData.expires_in,
-      // Token is intentionally NOT included in the response
-    });
+    // Redirect to connect page with success message
+    return NextResponse.redirect(
+      new URL('/connect?success=true&scope=' + encodeURIComponent(tokenData.scope || ''), request.url)
+    );
 
   } catch (err) {
     console.error('OAuth callback error:', err);
-    return NextResponse.json(
-      { success: false, error: 'internal_error' },
-      { status: 500 }
+    return NextResponse.redirect(
+      new URL('/connect?error=internal_error', request.url)
     );
   }
 }
