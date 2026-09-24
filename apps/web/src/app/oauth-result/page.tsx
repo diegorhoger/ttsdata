@@ -1,6 +1,6 @@
 import { consumeProbeResult } from '../../lib/oauth';
 
-export default function OAuthResultPage({ searchParams }: { searchParams: { result_id?: string } }) {
+export default function OAuthResultPage({ searchParams, request }: { searchParams: { result_id?: string }; request: Request }) {
   const resultId = searchParams.result_id;
 
   if (!resultId) {
@@ -15,7 +15,11 @@ export default function OAuthResultPage({ searchParams }: { searchParams: { resu
     );
   }
 
-  const result = consumeProbeResult(resultId, 'session-hash-from-cookie');
+      // In production, session hash would come from a signed session cookie
+    // For verification-only, we accept the result_id as a bearer credential
+    // The session binding is enforced at storage time
+    const sessionHash = request.cookies.get('ttsdata_session')?.value || 'anonymous';
+    const result = consumeProbeResult(resultId, sessionHash);
 
   if (!result) {
     return (
