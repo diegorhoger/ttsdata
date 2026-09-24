@@ -5,4 +5,4 @@ export {
   trendSignals, watchlists, watchlistItems, alertRules, alertHistory,
 } from './schema';
 
-export { OAuthRepository } from './repositories/oauth';
+export { OAuthRepository, type OAuthConfig } from './repositories/oauth';
