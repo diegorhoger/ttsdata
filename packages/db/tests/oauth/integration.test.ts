@@ -43,7 +43,11 @@ describe('OAuth Concurrent Consumption (PostgreSQL)', () => {
     ]);
     const successes = [r1, r2].filter(r => r.success);
     expect(successes.length).toBe(1);
+    const failures = [r1, r2].filter(r => !r.success);
+    expect(failures.length).toBe(1);
     expect(successes.length).toBe(1);
+    const failures = [r1, r2].filter(r => !r.success);
+    expect(failures.length).toBe(1);
   });
 
   it('allows exactly one concurrent consumer of a probe result record', async () => {
@@ -57,7 +61,11 @@ describe('OAuth Concurrent Consumption (PostgreSQL)', () => {
     ]);
     const successes = [r1, r2].filter(r => r.success);
     expect(successes.length).toBe(1);
+    const failures = [r1, r2].filter(r => !r.success);
+    expect(failures.length).toBe(1);
     expect(successes.length).toBe(1);
+    const failures = [r1, r2].filter(r => !r.success);
+    expect(failures.length).toBe(1);
   });
 
   it('wrong session cannot consume the valid session record', async () => {
@@ -87,15 +95,31 @@ describe('OAuth Concurrent Consumption (PostgreSQL)', () => {
     await repo.createState({ rawState, sessionId, expiresAt: new Date(Date.now() + 600000) });
     await repo.createProbeResult({ resultId, sessionId, data: { foo: 'bar' }, scopes: 'user.info.basic', bothSucceeded: true, expiresAt: new Date(Date.now() + 300000) });
 
+<<<<<<< Updated upstream
     const stateCheck = await repo['pool'].query('SELECT state_hash FROM oauth_states WHERE state_hash = $1', [createHmac('sha256', config.stateSecret).update(rawState).digest('hex')]);
+    expect(stateCheck.rows.length).toBeGreaterThan(0);
+    expect(typeof stateCheck.rows[0].state_hash).toBe('string');
+
+    const resultCheck = await repo['pool'].query('SELECT result_id_hash FROM oauth_probe_results WHERE result_id_hash = $1', [createHmac('sha256', config.sessionSecret || config.stateSecret).update(resultId).digest('hex')]);
+    expect(resultCheck.rows.length).toBeGreaterThan(0);
+    expect(typeof resultCheck.rows[0].result_id_hash).toBe('string');
+=======
+    const stateCheck = await repo['pool'].query('SELECT state_hash, session_hash FROM oauth_states WHERE state_hash = $1', [createHmac('sha256', config.stateSecret).update(rawState).digest('hex')]);
     expect(stateCheck.rows.length).toBe(1);
     expect(typeof stateCheck.rows[0].state_hash).toBe('string');
     expect(stateCheck.rows[0].state_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(typeof stateCheck.rows[0].session_hash).toBe('string');
+    expect(stateCheck.rows[0].session_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(stateCheck.rows[0].state_hash).not.toBe(rawState);
+    expect(stateCheck.rows[0].session_hash).not.toBe(sessionId);
 
-    const resultCheck = await repo['pool'].query('SELECT result_id_hash FROM oauth_probe_results WHERE result_id_hash = $1', [createHmac('sha256', config.resultSecret || config.sessionSecret || config.stateSecret).update(resultId).digest('hex')]);
+    const resultCheck = await repo['pool'].query('SELECT result_id_hash, session_hash FROM oauth_probe_results WHERE result_id_hash = $1', [createHmac('sha256', config.resultSecret || config.sessionSecret || config.stateSecret).update(resultId).digest('hex')]);
     expect(resultCheck.rows.length).toBe(1);
     expect(typeof resultCheck.rows[0].result_id_hash).toBe('string');
     expect(resultCheck.rows[0].result_id_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(typeof resultCheck.rows[0].session_hash).toBe('string');
+    expect(resultCheck.rows[0].session_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(resultCheck.rows[0].result_id_hash).not.toBe(resultId);
 
     // Verify raw values are not stored directly
     const rawStateCheck = await repo['pool'].query('SELECT state_hash FROM oauth_states WHERE session_hash = $1', [createHmac('sha256', config.sessionSecret).update(sessionId).digest('hex')]);
@@ -103,5 +127,6 @@ describe('OAuth Concurrent Consumption (PostgreSQL)', () => {
       // The session hash is a 64-char hex value, not the raw session string
       expect(rawStateCheck.rows[0].session_hash).toMatch(/^[a-f0-9]{64}$/);
     }
+>>>>>>> Stashed changes
   });
 });
