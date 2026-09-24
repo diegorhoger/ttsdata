@@ -45,16 +45,21 @@ export async function GET(request: NextRequest) {
   const result = await consumeProbeResult(resultId, sessionId);
 
   if (!result.success) {
-    return NextResponse.json(
+    const errorResponse = NextResponse.json(
       { error: result.error || 'Result not found or already consumed' },
       { status: 404 }
     );
+  errorResponse.cookies.set('ttsdata_probe_result', '', { maxAge: 0, path: '/' });
+  return errorResponse;
   }
 
-  return NextResponse.json({
+  // Clear probe cookie after consumption
+  const resClear = NextResponse.json({
     status: result.bothSucceeded ? 'success' : 'partial',
     scopes: result.scopes || '',
     data: result.data || {},
-    bothSucceeded: result.bothSucceeded ?? false,
+    bothSucceeded: Boolean(result.bothSucceeded ?? false),
   });
+  resClear.cookies.set('ttsdata_probe_result', '', { maxAge: 0, path: '/' });
+  return resClear;
 }

@@ -46,7 +46,6 @@ export interface ConsumeProbeResultResult {
 
 export class OAuthRepository {
   private externalPool?: import('pg').Pool;
-  private externalPool?: import('pg').Pool;
   private pool: Pool;
   private config: OAuthConfig;
 

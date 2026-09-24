@@ -88,11 +88,20 @@ describe('OAuth Concurrent Consumption (PostgreSQL)', () => {
     await repo.createProbeResult({ resultId, sessionId, data: { foo: 'bar' }, scopes: 'user.info.basic', bothSucceeded: true, expiresAt: new Date(Date.now() + 300000) });
 
     const stateCheck = await repo['pool'].query('SELECT state_hash FROM oauth_states WHERE state_hash = $1', [createHmac('sha256', config.stateSecret).update(rawState).digest('hex')]);
-    expect(stateCheck.rows.length).toBeGreaterThan(0);
+    expect(stateCheck.rows.length).toBe(1);
     expect(typeof stateCheck.rows[0].state_hash).toBe('string');
+    expect(stateCheck.rows[0].state_hash).toMatch(/^[a-f0-9]{64}$/);
 
-    const resultCheck = await repo['pool'].query('SELECT result_id_hash FROM oauth_probe_results WHERE result_id_hash = $1', [createHmac('sha256', config.sessionSecret || config.stateSecret).update(resultId).digest('hex')]);
-    expect(resultCheck.rows.length).toBeGreaterThan(0);
+    const resultCheck = await repo['pool'].query('SELECT result_id_hash FROM oauth_probe_results WHERE result_id_hash = $1', [createHmac('sha256', config.resultSecret || config.sessionSecret || config.stateSecret).update(resultId).digest('hex')]);
+    expect(resultCheck.rows.length).toBe(1);
     expect(typeof resultCheck.rows[0].result_id_hash).toBe('string');
+    expect(resultCheck.rows[0].result_id_hash).toMatch(/^[a-f0-9]{64}$/);
+
+    // Verify raw values are not stored directly
+    const rawStateCheck = await repo['pool'].query('SELECT state_hash FROM oauth_states WHERE session_hash = $1', [createHmac('sha256', config.sessionSecret).update(sessionId).digest('hex')]);
+    if (rawStateCheck.rows.length > 0) {
+      // The session hash is a 64-char hex value, not the raw session string
+      expect(rawStateCheck.rows[0].session_hash).toMatch(/^[a-f0-9]{64}$/);
+    }
   });
 });

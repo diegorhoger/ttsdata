@@ -84,6 +84,13 @@ export async function GET(request: NextRequest) {
     return response;
   }
   
+  // Validate exact hexadecimal format before decoding
+  if (!/^[a-f0-9]+$/i.test(stateParam) || !/^[a-f0-9]+$/i.test(stateVerification.rawState) || stateParam.length % 2 !== 0 || stateVerification.rawState.length % 2 !== 0) {
+    console.error('OAuth callback: invalid hex format');
+    const response = NextResponse.redirect(new URL('/connect?error=invalid_hex', CANONICAL_URL));
+    clearCookie(response);
+    return response;
+  }
   const stateBuf = Buffer.from(stateParam, 'hex');
   const rawStateBuf = Buffer.from(stateVerification.rawState, 'hex');
   if (!timingSafeEqual(stateBuf, rawStateBuf)) {
@@ -196,7 +203,7 @@ export async function GET(request: NextRequest) {
       probeResults.errors.push({ endpoint: 'video/list', status: videoListResult.error });
     }
 
-    const bothSucceeded = probeResults.userInfo && probeResults.videoList && probeResults.errors.length === 0;
+    const bothSucceeded = Boolean(probeResults.userInfo && probeResults.videoList && probeResults.errors.length === 0);
     const sanitized = sanitizeDisplayData(probeResults) as Record<string, unknown>;
 
     // Store probe result (session-bound in SQL)
