@@ -2,14 +2,14 @@
  * Server-Only OAuth Module for TikTok Display API Verification
  * 
  * This module handles:
- * - Signed state cookie generation and validation
- * - Durable state storage with atomic consumption
- * - Durable probe result storage with TTL
- * - Session-bound result retrieval
+ * - State registration and consumption (with session binding)
+ * - Probe result storage with TTL
+ * - Session binding via signed cookies
  * - Token revocation
  * - Response sanitization
  * 
- * This is a verification-only implementation. No user data is persisted.
+ * State and probe records are stored in-memory with TTL.
+ * For production: replace with PostgreSQL/Redis.
  */
 
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
@@ -45,7 +45,8 @@ export function getOAuthConfig(): OAuthConfig {
 
 const STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
-interface StateRecord {
+export interface StateRecord {
+  rawState: string;
   stateHash: string;
   sessionHash: string;
   issuedAt: number;
@@ -53,22 +54,21 @@ interface StateRecord {
   consumedAt: number | null;
 }
 
-// In-memory store for verification-only flow (use Redis/DB in production)
+// In-memory state store (use PostgreSQL/Redis in production)
 const stateStore = new Map<string, StateRecord>();
 
 /**
- * Create a cryptographically secure state value with session binding.
+ * Create a cryptographically secure state value.
+ * Registers the state in the store and returns the raw state value.
  */
 export function createState(sessionHash: string, secret: string): string {
-  const state = randomBytes(32).toString('hex');
+  const rawState = randomBytes(32).toString('hex');
   const issuedAt = Date.now();
   const expiresAt = issuedAt + STATE_TTL_MS;
+  const stateHash = createHmac('sha256', secret).update(rawState).digest('hex');
 
-  // Hash the state for storage (don't store raw state)
-  const stateHash = createHmac('sha256', secret).update(state).digest('hex');
-
-  // Store state record
   stateStore.set(stateHash, {
+    rawState,
     stateHash,
     sessionHash,
     issuedAt,
@@ -76,47 +76,84 @@ export function createState(sessionHash: string, secret: string): string {
     consumedAt: null,
   });
 
-  return state;
+  return rawState;
 }
 
 /**
- * Validate and atomically consume state.
- * Returns the session hash if valid, null otherwise.
+ * Consume state atomically.
+ * Returns { valid, sessionHash, error } tuple.
  */
 export function consumeState(
-  state: string,
+  rawState: string,
   sessionHash: string,
   secret: string
 ): { valid: boolean; sessionHash?: string; error?: string } {
-  // Hash the provided state
-  const stateHash = createHmac('sha256', secret).update(state).digest('hex');
+  const stateHash = createHmac('sha256', secret).update(rawState).digest('hex');
 
-  // Look up state record
   const record = stateStore.get(stateHash);
   if (!record) {
     return { valid: false, error: 'state_not_found' };
   }
 
-  // Check if already consumed (replay protection)
   if (record.consumedAt !== null) {
     return { valid: false, error: 'state_already_consumed' };
   }
 
-  // Check expiration
   if (Date.now() > record.expiresAt) {
     stateStore.delete(stateHash);
     return { valid: false, error: 'state_expired' };
   }
 
-  // Verify session binding
   if (record.sessionHash !== sessionHash) {
     return { valid: false, error: 'session_mismatch' };
   }
 
-  // Atomically consume state
+  // Atomically consume
   record.consumedAt = Date.now();
 
   return { valid: true, sessionHash: record.sessionHash };
+}
+
+// ============================================================================
+// Session Management
+// ============================================================================
+
+const SESSION_COOKIE_NAME = 'ttsdata_session';
+const SESSION_TTL_SECONDS = 3600; // 1 hour
+
+interface SessionRecord {
+  sessionHash: string;
+  createdAt: number;
+  expiresAt: number;
+}
+
+// In-memory session store
+const sessionStore = new Map<string, SessionRecord>();
+
+/**
+ * Create a session record and return the session hash.
+ */
+export function createSession(sessionHash: string): string {
+  const now = Date.now();
+  sessionStore.set(sessionHash, {
+    sessionHash,
+    createdAt: now,
+    expiresAt: now + SESSION_TTL_SECONDS * 1000,
+  });
+  return sessionHash;
+}
+
+/**
+ * Verify and retrieve session.
+ */
+export function getSession(sessionHash: string): SessionRecord | null {
+  const record = sessionStore.get(sessionHash);
+  if (!record) return null;
+  if (Date.now() > record.expiresAt) {
+    sessionStore.delete(sessionHash);
+    return null;
+  }
+  return record;
 }
 
 // ============================================================================
@@ -125,7 +162,8 @@ export function consumeState(
 
 const PROBE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
-interface ProbeResultRecord {
+export interface ProbeResultRecord {
+  resultId: string;
   resultIdHash: string;
   sessionHash: string;
   data: any;
@@ -136,12 +174,12 @@ interface ProbeResultRecord {
   consumedAt: number | null;
 }
 
-// In-memory store for verification-only flow (use Redis/DB in production)
+// In-memory probe result store
 const probeResultStore = new Map<string, ProbeResultRecord>();
 
 /**
  * Store probe result with session binding.
- * Returns the raw result ID (only shown once).
+ * Returns the raw result ID.
  */
 export function storeProbeResult(
   sessionHash: string,
@@ -151,9 +189,10 @@ export function storeProbeResult(
 ): string {
   const resultId = randomBytes(16).toString('hex');
   const resultIdHash = createHmac('sha256', sessionHash).update(resultId).digest('hex');
-
   const now = Date.now();
+
   probeResultStore.set(resultIdHash, {
+    resultId,
     resultIdHash,
     sessionHash,
     data,
@@ -168,34 +207,29 @@ export function storeProbeResult(
 }
 
 /**
- * Atomically consume probe result.
- * Returns the data if valid, null otherwise.
+ * Consume probe result atomically.
+ * Returns the data if valid.
  */
 export function consumeProbeResult(
   resultId: string,
   sessionHash: string
 ): { valid: boolean; data?: any; scopes?: string; bothSucceeded?: boolean; error?: string } {
-  // Hash the provided result ID with session
   const resultIdHash = createHmac('sha256', sessionHash).update(resultId).digest('hex');
 
-  // Look up record
   const record = probeResultStore.get(resultIdHash);
   if (!record) {
     return { valid: false, error: 'result_not_found' };
   }
 
-  // Check if already consumed
   if (record.consumedAt !== null) {
     return { valid: false, error: 'result_already_consumed' };
   }
 
-  // Check expiration
   if (Date.now() > record.expiresAt) {
     probeResultStore.delete(resultIdHash);
     return { valid: false, error: 'result_expired' };
   }
 
-  // Verify session binding
   if (record.sessionHash !== sessionHash) {
     return { valid: false, error: 'session_mismatch' };
   }
@@ -212,12 +246,119 @@ export function consumeProbeResult(
 }
 
 // ============================================================================
+// Cookie Utilities
+// ============================================================================
+
+const COOKIE_STATE_NAME = 'ttsdata_oauth_state';
+const COOKIE_SESSION_NAME = 'ttsdata_session';
+const STATE_COOKIE_TTL_SECONDS = 600; // 10 min
+const SESSION_COOKIE_TTL_SECONDS = 3600; // 1 hour
+
+/**
+ * Create signed state cookie value.
+ */
+export function createStateCookieValue(
+  rawState: string,
+  sessionHash: string,
+  secret: string
+): string {
+  const issuedAt = Date.now();
+  const hmac = createHmac('sha256', secret)
+    .update(`${rawState}.${sessionHash}.${issuedAt}`)
+    .digest('hex');
+  return `${rawState}.${sessionHash}.${issuedAt}.${hmac}`;
+}
+
+/**
+ * Verify and decode state cookie.
+ * Returns the raw state and session hash if valid.
+ */
+export function verifyStateCookie(
+  cookieValue: string,
+  secret: string
+): { rawState: string; sessionHash: string } | null {
+  if (!cookieValue) return null;
+
+  const parts = cookieValue.split('.');
+  if (parts.length !== 4) return null;
+
+  const [rawState, sessionHash, issuedAtStr, hmac] = parts;
+  const issuedAt = parseInt(issuedAtStr, 10);
+
+  if (isNaN(issuedAt)) return null;
+
+  // Check expiration
+  if (Date.now() - issuedAt > STATE_COOKIE_TTL_SECONDS * 1000) {
+    return null;
+  }
+
+  // Verify HMAC
+  const expectedHmac = createHmac('sha256', secret)
+    .update(`${rawState}.${sessionHash}.${issuedAt}`)
+    .digest('hex');
+
+  const hmacBuffer = Buffer.from(hmac, 'hex');
+  const expectedBuffer = Buffer.from(expectedHmac, 'hex');
+
+  if (hmacBuffer.length !== expectedBuffer.length) return null;
+  if (!timingSafeEqual(hmacBuffer, expectedBuffer)) return null;
+
+  return { rawState, sessionHash };
+}
+
+/**
+ * Create session cookie value.
+ */
+export function createSessionCookieValue(sessionHash: string, secret: string): string {
+  const issuedAt = Date.now();
+  const hmac = createHmac('sha256', secret)
+    .update(`${sessionHash}.${issuedAt}`)
+    .digest('hex');
+  return `${sessionHash}.${issuedAt}.${hmac}`;
+}
+
+/**
+ * Verify and decode session cookie.
+ */
+export function verifySessionCookie(
+  cookieValue: string,
+  secret: string
+): { sessionHash: string } | null {
+  if (!cookieValue) return null;
+
+  const parts = cookieValue.split('.');
+  if (parts.length !== 3) return null;
+
+  const [sessionHash, issuedAtStr, hmac] = parts;
+  const issuedAt = parseInt(issuedAtStr, 10);
+
+  if (isNaN(issuedAt)) return null;
+
+  // Check expiration
+  if (Date.now() - issuedAt > SESSION_COOKIE_TTL_SECONDS * 1000) {
+    return null;
+  }
+
+  // Verify HMAC
+  const expectedHmac = createHmac('sha256', secret)
+    .update(`${sessionHash}.${issuedAt}`)
+    .digest('hex');
+
+  const hmacBuffer = Buffer.from(hmac, 'hex');
+  const expectedBuffer = Buffer.from(expectedHmac, 'hex');
+
+  if (hmacBuffer.length !== expectedBuffer.length) return null;
+  if (!timingSafeEqual(hmacBuffer, expectedBuffer)) return null;
+
+  return { sessionHash };
+}
+
+// ============================================================================
 // Token Revocation
 // ============================================================================
 
 /**
  * Revoke TikTok OAuth token.
- * Returns true if revocation succeeded.
  */
 export async function revokeToken(
   accessToken: string,
@@ -261,16 +402,12 @@ const SENSITIVE_FIELDS = new Set([
 
 /**
  * Recursively sanitize display data.
- * Preserves exact structure, replaces sensitive values with placeholders.
  */
 export function sanitizeDisplayData(data: any): any {
   if (data === null || data === undefined) return data;
   if (typeof data === 'string') {
-    // Redact URLs
     if (data.startsWith('http://') || data.startsWith('https://')) return '<URL>';
-    // Redact long identifiers
     if (data.length > 20 && /^[a-zA-Z0-9_-]+$/.test(data)) return '<ID>';
-    // Redact email-like
     if (data.includes('@') && data.includes('.')) return '<EMAIL>';
     return data;
   }
@@ -292,18 +429,24 @@ export function sanitizeDisplayData(data: any): any {
 }
 
 // ============================================================================
-// Session Hash
+// Environment Validation
 // ============================================================================
 
 /**
- * Create a session hash from browser fingerprint data.
- * Used to bind OAuth state and probe results to a session.
+ * Validate all required environment variables are set.
+ * Throws if any are missing.
  */
-export function createSessionHash(
-  userAgent: string,
-  ip: string,
-  timestamp: number
-): string {
-  const data = `${userAgent}.${ip}.${timestamp}`;
-  return createHmac('sha256', 'session-binding-secret').update(data).digest('hex');
+export function validateEnvironment(): void {
+  const required = [
+    'NEXT_PUBLIC_TIKTOK_CLIENT_KEY',
+    'TIKTOK_CLIENT_SECRET',
+    'NEXT_PUBLIC_TIKTOK_REDIRECT_URI',
+    'OAUTH_STATE_SECRET',
+  ];
+
+  for (const key of required) {
+    if (!process.env[key]) {
+      throw new Error(`${key} is not configured`);
+    }
+  }
 }
