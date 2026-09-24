@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import { verifyStateCookie } from '../start/route';
-import { storeProbeResult, getProbeResult, deleteProbeResult } from '../../../lib/probe-store';
+import { storeProbeResult } from '../../../lib/probe-store';
 
 const CANONICAL_URL = 'https://ttsdata.netlify.app';
 const PROBE_TTL_SECONDS = 300; // 5 minutes
@@ -18,10 +18,17 @@ export async function GET(request: NextRequest) {
   const state = searchParams.get('state');
   const error = searchParams.get('error');
 
+  // Clear state cookie on every terminal callback
+  const clearCookie = (response: NextResponse) => {
+    response.cookies.set('ttsdata_oauth_state', '', { maxAge: 0, path: '/' });
+  };
+
   // Handle OAuth errors from TikTok
   if (error) {
     console.error(`TikTok OAuth error: ${error}`);
-    return NextResponse.redirect(new URL('/connect?error=oauth_failed', CANONICAL_URL));
+    const response = NextResponse.redirect(new URL('/connect?error=oauth_failed', CANONICAL_URL));
+    clearCookie(response);
+    return response;
   }
 
   // Validate state from signed cookie
@@ -49,11 +56,6 @@ export async function GET(request: NextRequest) {
     clearCookie(response);
     return response;
   }
-
-  // Clear state cookie (single-use)
-  const clearCookie = (response: NextResponse) => {
-    response.cookies.set('ttsdata_oauth_state', '', { maxAge: 0, path: '/' });
-  };
 
   try {
     // Exchange authorization code for access token
@@ -135,7 +137,7 @@ export async function GET(request: NextRequest) {
 
     // Revoke temporary token (best effort, don't fail if it errors)
     try {
-      await fetch('https://open.tiktokapis.com/v2/oauth/revoke/', {
+      const revokeResponse = await fetch('https://open.tiktokapis.com/v2/oauth/revoke/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
@@ -153,7 +155,7 @@ export async function GET(request: NextRequest) {
       console.error('Failed to revoke token:', err);
     }
 
-    // Store sanitized result in server-side TTL store (not cookie)
+    // Store sanitized result in server-side TTL store
     const resultId = randomBytes(16).toString('hex');
     storeProbeResult(resultId, {
       data: sanitized,
@@ -163,11 +165,17 @@ export async function GET(request: NextRequest) {
     });
 
     const successUrl = new URL('/oauth-result', CANONICAL_URL);
+    if (bothSucceeded) {
+      successUrl.searchParams.set('status', 'success');
+      successUrl.searchParams.set('scopes', scopes);
+    } else {
+      successUrl.searchParams.set('status', 'partial');
+      successUrl.searchParams.set('scopes', scopes);
+    }
     successUrl.searchParams.set('result_id', resultId);
 
     const response = NextResponse.redirect(successUrl);
     clearCookie(response);
-
     return response;
 
   } catch (err) {
@@ -204,29 +212,4 @@ function sanitizeDisplayData(data: any): any {
     return result;
   }
   return data;
-}
-
-/**
- * Verify and decode probe result cookie.
- */
-export function verifyProbeCookie(cookieValue: string): any | null {
-  if (!cookieValue) return null;
-  try {
-    const decoded = Buffer.from(cookieValue, 'base64url').toString();
-    const lastDot = decoded.lastIndexOf('.');
-    if (lastDot === -1) return null;
-    const payload = decoded.slice(0, lastDot);
-    const hmac = decoded.slice(lastDot + 1);
-    const secret = process.env.OAUTH_STATE_SECRET || 'development-secret-change-in-production';
-    const expectedHmac = createHmac('sha256', secret).update(payload).digest('hex');
-    const hmacBuffer = Buffer.from(hmac, 'hex');
-  const expectedBuffer = Buffer.from(expectedHmac, 'hex');
-  if (hmacBuffer.length !== expectedBuffer.length) return null;
-  if (!timingSafeEqual(hmacBuffer, expectedBuffer)) return null;
-    const parsed = JSON.parse(payload);
-    if (Date.now() - parsed.timestamp > PROBE_TTL_SECONDS * 1000) return null;
-    return parsed.data;
-  } catch {
-    return null;
-  }
 }
