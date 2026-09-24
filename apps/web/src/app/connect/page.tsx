@@ -19,7 +19,7 @@ export default function TikTokConnectPage() {
 
   // Check for success/error from OAuth callback
   const [oauthResult, setOauthResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-  const [isConnected, setIsConnected] = useState(false);
+  // Connection state is now server-verified only
 
   useEffect(() => {
     // Check if already connected
@@ -33,7 +33,7 @@ export default function TikTokConnectPage() {
 
     if (success) {
       setOauthResult({ type: 'success', message: `Autorização concluída! Escopos: ${scope || 'N/A'}` });
-      setIsConnected(true);
+      
     } else if (error) {
       setOauthResult({ type: 'error', message: `Erro: ${error}${description ? ' - ' + description : ''}` });
     }

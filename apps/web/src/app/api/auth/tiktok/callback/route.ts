@@ -30,18 +30,24 @@ export async function GET(request: NextRequest) {
 
   if (!verifiedState) {
     console.error('OAuth callback: invalid or missing state cookie');
-    return NextResponse.redirect(new URL('/connect?error=invalid_state', CANONICAL_URL));
+    const response = NextResponse.redirect(new URL('/connect?error=invalid_state', CANONICAL_URL));
+    clearCookie(response);
+    return response;
   }
 
   // Verify state matches exactly
   if (state !== verifiedState.state) {
     console.error('OAuth callback: state mismatch');
-    return NextResponse.redirect(new URL('/connect?error=state_mismatch', CANONICAL_URL));
+    const response = NextResponse.redirect(new URL('/connect?error=state_mismatch', CANONICAL_URL));
+    clearCookie(response);
+    return response;
   }
 
   // Validate code
   if (!code) {
-    return NextResponse.redirect(new URL('/connect?error=missing_code', CANONICAL_URL));
+    const response = NextResponse.redirect(new URL('/connect?error=missing_code', CANONICAL_URL));
+    clearCookie(response);
+    return response;
   }
 
   // Clear state cookie (single-use)
@@ -138,7 +144,11 @@ export async function GET(request: NextRequest) {
           token: accessToken,
         }),
       });
-      console.log('Temporary token revoked after verification');
+      if (revokeResponse.ok) {
+        console.log('Temporary token revoked after verification');
+      } else {
+        console.error('Failed to revoke token:', revokeResponse.status);
+      }
     } catch (err) {
       console.error('Failed to revoke token:', err);
     }
