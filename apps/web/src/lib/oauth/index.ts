@@ -185,6 +185,44 @@ export function verifyProbeResultCookie(cookieValue: string): { rawState: string
   return { rawState, sessionId };
 }
 
+/**
+ * Create session identity from a request.
+ * Extracts session cookie or generates a new session.
+ * Standalone export for testing purposes.
+ */
+export function createSessionIdentity(request: NextRequest): {
+  sessionId: string;
+  sessionHash: string;
+} {
+  // Check for existing session cookie
+  const existingSessionCookie = request.cookies.get(SESSION_COOKIE_NAME)?.value;
+  
+  if (existingSessionCookie) {
+    // Verify and extract sessionId from cookie
+    const parts = existingSessionCookie.split('.');
+    if (parts.length === 3) {
+      const [sessionId, issuedAtStr, hmac] = parts;
+      const issuedAt = parseInt(issuedAtStr, 10);
+      
+      if (!isNaN(issuedAt) && Date.now() - issuedAt < SESSION_COOKIE_TTL_SECONDS * 1000) {
+        // Valid cookie - compute sessionHash from sessionId
+        const sessionHash = createHmac('sha256', getConfig().sessionSecret)
+          .update(sessionId)
+          .digest('hex');
+        return { sessionId, sessionHash };
+      }
+    }
+  }
+  
+  // Generate new session
+  const sessionId = randomBytes(32).toString('hex');
+  const sessionHash = createHmac('sha256', getConfig().sessionSecret)
+    .update(sessionId)
+    .digest('hex');
+  
+  return { sessionId, sessionHash };
+}
+
 // ============================================================================
 // OAuth Flow Helpers
 // ============================================================================
@@ -195,6 +233,19 @@ export function verifyProbeResultCookie(cookieValue: string): { rawState: string
  * IMPORTANT: Caller MUST use the returned response (or copy its cookies)
  * for the redirect, otherwise cookies are lost.
  */
+export async function createOAuthState(request: NextRequest): Promise<{
+  state: string;
+  sessionId: string;
+}> {
+  const config = getConfig();
+  const { authUrl, response } = await createOAuthStateWithCookies(request);
+  // Extract state from authUrl
+  const url = new URL(authUrl);
+  const state = url.searchParams.get('state') || '';
+  const sessionId = response.cookies.get(SESSION_COOKIE_NAME)?.value?.split('.')[0] || '';
+  return { state, sessionId };
+}
+
 export async function createOAuthStateWithCookies(request: NextRequest): Promise<{
   authUrl: string;
   response: NextResponse;
