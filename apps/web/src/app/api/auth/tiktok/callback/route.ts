@@ -143,27 +143,20 @@ export async function GET(request: NextRequest) {
       console.error('Failed to revoke token:', err);
     }
 
-    // Store sanitized result in signed cookie
-    const resultCookie = createSignedProbeCookie(sanitized, Date.now());
+    // Store sanitized result in server-side TTL store (not cookie)
+    const resultId = randomBytes(16).toString('hex');
+    probeStore.set(resultId, {
+      data: sanitized,
+      timestamp: Date.now(),
+      scopes,
+      bothSucceeded,
+    });
 
     const successUrl = new URL('/oauth-result', CANONICAL_URL);
-    if (bothSucceeded) {
-      successUrl.searchParams.set('status', 'success');
-      successUrl.searchParams.set('scopes', scopes);
-    } else {
-      successUrl.searchParams.set('status', 'partial');
-      successUrl.searchParams.set('scopes', scopes);
-    }
+    successUrl.searchParams.set('result_id', resultId);
 
     const response = NextResponse.redirect(successUrl);
     clearCookie(response);
-    response.cookies.set(PROBE_COOKIE_NAME, resultCookie, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: PROBE_TTL_SECONDS,
-      path: '/',
-    });
 
     return response;
 
@@ -226,7 +219,10 @@ export function verifyProbeCookie(cookieValue: string): any | null {
     const hmac = decoded.slice(lastDot + 1);
     const secret = process.env.OAUTH_STATE_SECRET || 'development-secret-change-in-production';
     const expectedHmac = createHmac('sha256', secret).update(payload).digest('hex');
-    if (hmac !== expectedHmac) return null;
+    const hmacBuffer = Buffer.from(hmac, 'hex');
+  const expectedBuffer = Buffer.from(expectedHmac, 'hex');
+  if (hmacBuffer.length !== expectedBuffer.length) return null;
+  if (!timingSafeEqual(hmacBuffer, expectedBuffer)) return null;
     const parsed = JSON.parse(payload);
     if (Date.now() - parsed.timestamp > PROBE_TTL_SECONDS * 1000) return null;
     return parsed.data;

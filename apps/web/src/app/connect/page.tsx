@@ -12,16 +12,9 @@ import { useState, useEffect } from "react";
 export default function TikTokConnectPage() {
   // Scopes are now requested by the server endpoint
 
-  const handleConnect = async () => {
-    // Call server endpoint to start OAuth (sets signed state cookie)
-    const response = await fetch('/api/auth/tiktok/start');
-    if (response.redirected) {
-      window.location.href = response.url;
-    } else {
-      const data = await response.json();
-      console.error('Failed to start OAuth:', data);
-      alert('Erro ao iniciar conexão. Tente novamente.');
-    }
+  const handleConnect = () => {
+    // Navigate directly to server endpoint (avoids CORS issues with fetch)
+    window.location.assign('/api/auth/tiktok/start');
   };
 
   // Check for success/error from OAuth callback
@@ -30,8 +23,7 @@ export default function TikTokConnectPage() {
 
   useEffect(() => {
     // Check if already connected
-    const connected = localStorage.getItem('tiktok_connected') === 'true';
-    setIsConnected(connected);
+    // Connection state is now verified server-side
 
     const params = new URLSearchParams(window.location.search);
     const success = params.get('success');

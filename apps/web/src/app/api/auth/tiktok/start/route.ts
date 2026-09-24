@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { randomBytes, createHmac } from 'crypto';
+import { randomBytes, createHmac, timingSafeEqual } from 'crypto';
 
 const COOKIE_NAME = 'ttsdata_oauth_state';
 const STATE_TTL_SECONDS = 600; // 10 minutes
@@ -47,7 +47,10 @@ export async function GET(request: NextRequest) {
  * Format: state.issuedAt.hmac
  */
 function createSignedStateCookie(state: string, issuedAt: number): string {
-  const secret = process.env.OAUTH_STATE_SECRET || 'development-secret-change-in-production';
+  const secret = process.env.OAUTH_STATE_SECRET;
+  if (!secret) {
+    throw new Error('OAUTH_STATE_SECRET is not configured');
+  }
   const hmac = createHmac('sha256', secret)
     .update(`${state}.${issuedAt}`)
     .digest('hex');
@@ -73,12 +76,18 @@ export function verifyStateCookie(cookieValue: string): { state: string; issuedA
   if (Date.now() - issuedAt > STATE_TTL_SECONDS * 1000) return null;
 
   // Verify HMAC
-  const secret = process.env.OAUTH_STATE_SECRET || 'development-secret-change-in-production';
+  const secret = process.env.OAUTH_STATE_SECRET;
+  if (!secret) {
+    throw new Error('OAUTH_STATE_SECRET is not configured');
+  }
   const expectedHmac = createHmac('sha256', secret)
     .update(`${state}.${issuedAt}`)
     .digest('hex');
 
-  if (hmac !== expectedHmac) return null;
+  const hmacBuffer = Buffer.from(hmac, 'hex');
+  const expectedBuffer = Buffer.from(expectedHmac, 'hex');
+  if (hmacBuffer.length !== expectedBuffer.length) return null;
+  if (!timingSafeEqual(hmacBuffer, expectedBuffer)) return null;
 
   return { state, issuedAt };
 }
