@@ -10,8 +10,7 @@
  */
 
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { eq, isNull, gt } from 'drizzle-orm';
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import * as schema from '../schema';
 import { createHmac } from 'crypto';
 
@@ -92,17 +91,17 @@ export class OAuthRepository {
   }
 
   /**
-   * Get database connection.
+   * Get Drizzle database instance.
    */
-  private async getDb() {
-    return drizzle(this.pool, { schema: this.schema });
+  private getDb(): ReturnType<typeof drizzle> {
+    return drizzle(this.pool, { schema });
   }
 
   /**
    * Create OAuth state record.
    */
   async createState(params: CreateStateParams): Promise<string> {
-    const db = await this.getDb();
+    const db = this.getDb();
     
     const stateHash = this.hashValue(params.stateValue);
     
@@ -118,71 +117,68 @@ export class OAuthRepository {
   }
 
   /**
-   * Consume state atomically using conditional UPDATE.
+   * Consume state atomically using conditional UPDATE with raw SQL.
    */
   async consumeState(
     rawState: string,
     sessionHash: string
   ): Promise<ConsumeStateResult> {
-    const db = await this.getDb();
+    const client = await this.pool.connect();
     
-    const stateHash = this.hashValue(rawState);
-    const sessionHashHashed = this.hashSession(sessionHash);
+    try {
+      const stateHash = this.hashValue(rawState);
+      const sessionHashHashed = this.hashSession(sessionHash);
 
-    // Atomic conditional update
-    const result = await db
-      .update(schema.oauthStates)
-      .set({
-        consumedAt: new Date(),
-      })
-      .where(eq(schema.oauthStates.stateHash, stateHash))
-      .where(isNull(schema.oauthStates.consumedAt))
-      .where(gt(schema.oauthStates.expiresAt, new Date()))
-      .returning({
-        id: schema.oauthStates.id,
-        stateValue: schema.oauthStates.stateValue,
-        sessionHash: schema.oauthStates.sessionHash,
-        consumedAt: schema.oauthStates.consumedAt,
-      });
+      // Use raw SQL for atomic conditional update
+      const result = await client.query(`
+        UPDATE oauth_states 
+        SET consumed_at = NOW()
+        WHERE state_hash = $1
+          AND consumed_at IS NULL
+          AND expires_at > NOW()
+        RETURNING id, state_value, session_hash, consumed_at
+      `, [stateHash]);
 
-    if (result.length === 0) {
-      // Check if state exists but is expired
-      const existing = await db
-        .select()
-        .from(schema.oauthStates)
-        .where(eq(schema.oauthStates.stateHash, stateHash))
-        .limit(1);
+      if (result.rows.length === 0) {
+        // Check if state exists at all
+        const existing = await client.query(
+          `SELECT id FROM oauth_states WHERE state_hash = $1 LIMIT 1`,
+          [stateHash]
+        );
 
-      if (existing.length === 0) {
-        return { success: false, error: 'state_not_found' };
+        if (existing.rows.length === 0) {
+          return { success: false, error: 'state_not_found' };
+        }
+
+        return { success: false, error: 'state_expired' };
       }
 
-      return { success: false, error: 'state_expired' };
-    }
+      const stateRecord = result.rows[0];
 
-    const stateRecord = result[0];
-    
-    // Verify session binding
-    if (stateRecord.sessionHash !== sessionHashHashed) {
-      return { success: false, error: 'session_mismatch' };
-    }
+      // Verify session binding
+      if (stateRecord.session_hash !== sessionHashHashed) {
+        return { success: false, error: 'session_mismatch' };
+      }
 
-    return {
-      success: true,
-      stateRecord: {
-        id: stateRecord.id,
-        stateValue: stateRecord.stateValue,
-        sessionHash: stateRecord.sessionHash,
-        consumedAt: stateRecord.consumedAt,
-      },
-    };
+      return {
+        success: true,
+        stateRecord: {
+          id: stateRecord.id,
+          stateValue: stateRecord.state_value,
+          sessionHash: stateRecord.session_hash,
+          consumedAt: stateRecord.consumed_at,
+        },
+      };
+    } finally {
+      client.release();
+    }
   }
 
   /**
    * Create probe result record.
    */
   async createProbeResult(params: CreateProbeResultParams): Promise<string> {
-    const db = await this.getDb();
+    const db = this.getDb();
     
     const resultIdHash = this.hashSession(params.resultId);
     
@@ -200,66 +196,69 @@ export class OAuthRepository {
   }
 
   /**
-   * Consume probe result atomically.
+   * Consume probe result atomically using raw SQL.
    */
   async consumeProbeResult(
     resultId: string,
     sessionHash: string
   ): Promise<ConsumeProbeResultResult> {
-    const db = await this.getDb();
+    const client = await this.pool.connect();
     
-    const resultIdHash = this.hashSession(resultId);
-    const sessionHashHashed = this.hashSession(sessionHash);
+    try {
+      const resultIdHash = this.hashSession(resultId);
+      const sessionHashHashed = this.hashSession(sessionHash);
 
-    // Atomic conditional update
-    const result = await db
-      .update(schema.oauthProbeResults)
-      .set({
-        consumedAt: new Date(),
-      })
-      .where(eq(schema.oauthProbeResults.resultIdHash, resultIdHash))
-      .where(isNull(schema.oauthProbeResults.consumedAt))
-      .where(gt(schema.oauthProbeResults.expiresAt, new Date()))
-      .returning({
-        id: schema.oauthProbeResults.id,
-        data: schema.oauthProbeResults.data,
-        scopes: schema.oauthProbeResults.scopes,
-        bothSucceeded: schema.oauthProbeResults.bothSucceeded,
-        consumedAt: schema.oauthProbeResults.consumedAt,
-      });
+      const result = await client.query(`
+        UPDATE oauth_probe_results 
+        SET consumed_at = NOW()
+        WHERE result_id_hash = $1
+          AND consumed_at IS NULL
+          AND expires_at > NOW()
+        RETURNING id, data, scopes, both_succeeded, consumed_at
+      `, [resultIdHash]);
 
-    if (result.length === 0) {
-      // Check if expired
-      const existing = await db
-        .select()
-        .from(schema.oauthProbeResults)
-        .where(eq(schema.oauthProbeResults.resultIdHash, resultIdHash))
-        .limit(1);
+      if (result.rows.length === 0) {
+        // Check if exists
+        const existing = await client.query(
+          `SELECT id FROM oauth_probe_results WHERE result_id_hash = $1 LIMIT 1`,
+          [resultIdHash]
+        );
 
-      if (existing.length === 0) {
-        return { success: false, error: 'result_not_found' };
+        if (existing.rows.length === 0) {
+          return { success: false, error: 'result_not_found' };
+        }
+
+        return { success: false, error: 'result_expired' };
       }
 
-      return { success: false, error: 'result_expired' };
+      const probeRecord = result.rows[0];
+
+      // Verify session binding
+      if (probeRecord.session_hash !== sessionHashHashed) {
+        return { success: false, error: 'session_mismatch' };
+      }
+
+      // Parse data JSON
+      let data: Record<string, any> = {};
+      try {
+        data = JSON.parse(probeRecord.data);
+      } catch {
+        data = {};
+      }
+
+      return {
+        success: true,
+        probeRecord: {
+          id: probeRecord.id,
+          data,
+          scopes: probeRecord.scopes,
+          bothSucceeded: probeRecord.both_succeeded,
+          consumedAt: probeRecord.consumed_at,
+        },
+      };
+    } finally {
+      client.release();
     }
-
-    const probeRecord = result[0];
-
-    // Verify session binding
-    if (probeRecord.sessionHash !== sessionHashHashed) {
-      return { success: false, error: 'session_mismatch' };
-    }
-
-    return {
-      success: true,
-      probeRecord: {
-        id: probeRecord.id,
-        data: probeRecord.data as Record<string, any>,
-        scopes: probeRecord.scopes,
-        bothSucceeded: probeRecord.bothSucceeded,
-        consumedAt: probeRecord.consumedAt,
-      },
-    };
   }
 
   /**
