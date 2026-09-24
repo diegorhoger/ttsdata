@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'TTSData - TikTok Shop Market Intelligence',
-  description: 'Find the right TikTok Shop product, understand why it is moving, and know what content to create.',
+  title: 'TTSData - Análise de Performance para Criadores TikTok',
+  description: 'Performance analytics for TikTok creators using authorized Display API data.',
 };
 
 export default function RootLayout({
