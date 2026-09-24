@@ -10,38 +10,38 @@ export default function HomePage() {
           usando dados autorizados pela TikTok Display API.
         </p>
         <div className="flex gap-4 justify-center">
-          <a href="/register" className="rounded-lg bg-sky-600 px-6 py-3 text-lg font-medium text-white hover:bg-sky-700">
-            Começar grátis
+          <a href="/connect" className="rounded-lg bg-sky-600 px-6 py-3 text-lg font-medium text-white hover:bg-sky-700">
+            Conectar com TikTok
           </a>
-          <a href="/products" className="rounded-lg border border-slate-300 px-6 py-3 text-lg font-medium text-slate-700 hover:bg-slate-50">
-            Explorar produtos
+          <a href="/privacy" className="rounded-lg border border-slate-300 px-6 py-3 text-lg font-medium text-slate-700 hover:bg-slate-50">
+            Política de Privacidade
           </a>
         </div>
       </section>
 
       <section className="grid md:grid-cols-3 gap-8 mb-16">
         <div className="rounded-xl bg-white p-6 shadow-sm border border-slate-200">
-          <div className="text-3xl font-bold text-sky-600 mb-2">Oportunidade</div>
-          <h3 className="text-lg font-semibold text-slate-900 mb-2">Score explicável</h3>
+          <div className="text-3xl font-bold text-sky-600 mb-2">Perfil</div>
+          <h3 className="text-lg font-semibold text-slate-900 mb-2">Seu perfil</h3>
           <p className="text-slate-600">
-            Cada produto recebe uma score de 0-100 com explicação clara dos fatores 
-            que aumentaram ou reduziram a oportunidade.
+            Visualize seu nome, avatar, contagem de seguidores e vídeos públicos 
+            diretamente do TikTok.
           </p>
         </div>
         <div className="rounded-xl bg-white p-6 shadow-sm border border-slate-200">
-          <div className="text-3xl font-bold text-emerald-600 mb-2">Saturação</div>
-          <h3 className="text-lg font-semibold text-slate-900 mb-2">Concorrência visível</h3>
+          <div className="text-3xl font-bold text-emerald-600 mb-2">Vídeos</div>
+          <h3 className="text-lg font-semibold text-slate-900 mb-2">Seus vídeos</h3>
           <p className="text-slate-600">
-            Saiba quantos criadores já promovem o produto e se ainda há espaço 
-            para se diferenciar.
+            Acompanhe visualizações, curtidas, comentários e compartilhamentos 
+            dos seus vídeos públicos.
           </p>
         </div>
         <div className="rounded-xl bg-white p-6 shadow-sm border border-slate-200">
-          <div className="text-3xl font-bold text-amber-600 mb-2">Tendência</div>
-          <h3 className="text-lg font-semibold text-slate-900 mb-2">Ciclo de vida</h3>
+          <div className="text-3xl font-bold text-amber-600 mb-2">Histórico</div>
+          <h3 className="text-lg font-semibold text-slate-900 mb-2">Seu histórico</h3>
           <p className="text-slate-600">
-            Identifique se um produto está emergindo, crescendo, maduro ou em declínio 
-            antes de entrar na trend.
+            Compare a performance dos seus vídeos ao longo do tempo com 
+            sincronizações determinísticas.
           </p>
         </div>
       </section>
@@ -51,19 +51,19 @@ export default function HomePage() {
         <ol className="grid md:grid-cols-4 gap-6 text-slate-600">
           <li>
             <div className="text-2xl font-bold text-sky-600 mb-1">1</div>
-            <p>Conecte sua conta TikTok Shop</p>
+            <p>Conecte sua conta TikTok</p>
           </li>
           <li>
             <div className="text-2xl font-bold text-sky-600 mb-1">2</div>
-            <p>Dados são ingeridos da API oficial</p>
+            <p>Autorize acesso ao perfil e vídeos</p>
           </li>
           <li>
             <div className="text-2xl font-bold text-sky-600 mb-1">3</div>
-            <p>Calculamos scores e tendências</p>
+            <p>Veja sua performance pessoal</p>
           </li>
           <li>
             <div className="text-2xl font-bold text-sky-600 mb-1">4</div>
-            <p>Você decide o que promover</p>
+            <p>Desconecte ou exclua dados</p>
           </li>
         </ol>
       </section>

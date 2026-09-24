@@ -33,8 +33,9 @@ export default function PrivacyPage() {
         <h2 className="text-2xl font-semibold text-slate-900">3. Armazenamento e Retenção</h2>
         <p>
           Os dados do usuário são armazenados em servidores seguros e criptografados.
-          Os usuários podem solicitar a exclusão completa de seus dados a qualquer momento
-          através das configurações da conta ou entrando em contato conosco.
+          Os dados são mantidos apenas pelo tempo necessário para fornecer o serviço
+          e são excluídos automaticamente após 90 dias de inatividade ou quando o
+          usuário solicita a exclusão através das configurações da conta.
         </p>
 
         <h2 className="text-2xl font-semibold text-slate-900">4. Compartilhamento</h2>
@@ -54,7 +55,7 @@ export default function PrivacyPage() {
 
         <h2 className="text-2xl font-semibold text-slate-900">6. Contato</h2>
         <p>
-          Para questões sobre privacidade, entre em contato: contato@ttsdata.netlify.app
+          Para questões sobre privacidade, entre em contato: diegorhoger@gmail.com
         </p>
       </div>
     </div>

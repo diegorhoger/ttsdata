@@ -13,7 +13,7 @@ export default function TermsPage() {
 
         <h2 className="text-2xl font-semibold text-slate-900">2. Descrição do Serviço</h2>
         <p>
-          A TTSData é uma plataforma de inteligência de mercado para criadores TikTok Shop no Brasil.
+          A TTSData é uma plataforma de análise de performance pessoal para criadores TikTok no Brasil.
           O serviço utiliza APIs oficiais do TikTok para fornecer análises de performance e tendências.
         </p>
 
@@ -26,7 +26,7 @@ export default function TermsPage() {
         <h2 className="text-2xl font-semibold text-slate-900">4. Conta e Segurança</h2>
         <p>
           Você é responsável por manter a segurança de sua conta TTSData e por todas as atividades
-          realizadas sob sua credenciais. Notifique-nos imediatamente sobre qualquer uso não autorizado.
+          realizadas sob suas credenciais. Notifique-nos imediatamente sobre qualquer uso não autorizado.
         </p>
 
         <h2 className="text-2xl font-semibold text-slate-900">5. Uso Aceitável</h2>
@@ -36,7 +36,7 @@ export default function TermsPage() {
           <li>Tentar acessar dados de outros usuários sem autorização</li>
           <li>Usar a plataforma para fins ilegais ou fraudulentos</li>
           <li>Realizar engenharia reversa ou tentar extrair código-fonte</li>
-          <li>Sofrer ataques de negação de serviço ou ataques de força bruta</li>
+          <li>Realizar ataques de negação de serviço ou ataques de força bruta</li>
         </ul>
 
         <h2 className="text-2xl font-semibold text-slate-900">6. APIs de Terceiros</h2>
@@ -47,7 +47,7 @@ export default function TermsPage() {
 
         <h2 className="text-2xl font-semibold text-slate-900">7. Limitação de Responsabilidade</h2>
         <p>
-          A TTSData não garante a disponibilidade contínua do servicio ou a precisão dos dados fornecidos
+          A TTSData não garante a disponibilidade contínua do serviço ou a precisão dos dados fornecidos
           por APIs de terceiros. Não nos responsabilizamos por decisões tomadas com base nas análises
           fornecidas pela plataforma.
         </p>
@@ -66,7 +66,7 @@ export default function TermsPage() {
 
         <h2 className="text-2xl font-semibold text-slate-900">10. Contato</h2>
         <p>
-          Para questões sobre estes termos: contato@ttsdata.netlify.app
+          Para questões sobre estes termos: diegorhoger@gmail.com
         </p>
       </div>
     </div>

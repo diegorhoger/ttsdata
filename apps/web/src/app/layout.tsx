@@ -41,7 +41,7 @@ export default function RootLayout({
         <main>{children}</main>
         <footer className="border-t border-slate-200 bg-white mt-12">
           <div className="mx-auto max-w-7xl px-4 py-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-slate-500">
-            <p>TTSData &copy; 2024. Dados obtidos via TikTok Display API com autorização do usuário.</p>
+            <p>TTSData &copy; {new Date().getFullYear()}. Dados obtidos via TikTok Display API com autorização do usuário.</p>
             <div className="flex gap-4">
               <a href="/terms" className="hover:text-sky-600">Termos de Serviço</a>
               <a href="/privacy" className="hover:text-sky-600">Política de Privacidade</a>
