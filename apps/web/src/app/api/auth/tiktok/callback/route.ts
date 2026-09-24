@@ -112,11 +112,9 @@ export async function GET(request: NextRequest) {
     return response;
   }
 
-  // Derive sessionHash from rawState (same as in createOAuthStateWithCookies)
+  // Get session from verified cookie (independent of rawState)
   const config = getConfig();
-  const sessionHash = createHmac('sha256', config.sessionSecret)
-    .update(stateVerification.rawState)
-    .digest('hex');
+  const sessionId = sessionVerification.sessionId;
 
   // Consume state from DB (session-bound in SQL)
   const stateResult = await consumeOAuthState(stateVerification.rawState, sessionId);
@@ -202,8 +200,9 @@ export async function GET(request: NextRequest) {
     const sanitized = sanitizeDisplayData(probeResults) as Record<string, unknown>;
 
     // Store probe result (session-bound in SQL)
-    const resultId = await storeProbeResult(stateVerification.rawState, sessionHash, sanitized, rawScopes, bothSucceeded);
-    const probeCookie = createProbeCookie(stateVerification.rawState, sessionVerification.sessionId);
+    const resultId = randomBytes(16).toString('hex');
+    await storeProbeResult(resultId, sessionId, sanitized, rawScopes, bothSucceeded);
+    const probeCookie = createProbeCookie(resultId, sessionVerification.sessionId);
 
     const successUrl = new URL('/oauth-result', CANONICAL_URL);
     successUrl.searchParams.set('result_id', resultId);

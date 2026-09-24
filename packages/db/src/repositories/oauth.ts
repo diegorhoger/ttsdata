@@ -46,15 +46,21 @@ export interface ConsumeProbeResultResult {
 
 export class OAuthRepository {
   private externalPool?: import('pg').Pool;
+  private externalPool?: import('pg').Pool;
   private pool: Pool;
   private config: OAuthConfig;
 
-  constructor(databaseUrl: string, config: OAuthConfig) {
-    if (!databaseUrl || databaseUrl.trim() === '') {
-      throw new Error('DATABASE_URL is required and must not be empty');
+  constructor(poolOrUrl: import('pg').Pool | string, config: OAuthConfig) {
+    if (typeof poolOrUrl === 'string') {
+      const url = poolOrUrl.trim();
+      if (!url) throw new Error('DATABASE_URL is required and must not be empty');
+      this.pool = new Pool({ connectionString: url } as import('pg').PoolConfig);
+      this.externalPool = undefined;
+    } else {
+      this.pool = poolOrUrl;
+      this.externalPool = poolOrUrl;
     }
-    // Fail-closed: no silent localhost defaults
-    this.pool = new Pool({ connectionString: databaseUrl } as PoolConfig);
+    if (!config) throw new Error('OAuthConfig is required');
     this.config = config;
   }
 
