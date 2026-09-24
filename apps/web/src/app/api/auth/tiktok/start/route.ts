@@ -1,102 +1,70 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { randomBytes, createHmac, timingSafeEqual } from 'crypto';
+import {
+  getOAuthConfig,
+  createState,
+  createStateCookieValue,
+  createSessionCookieValue,
+  createSession,
+  validateEnvironment,
+} from '../../../lib/oauth';
 
-const COOKIE_NAME = 'ttsdata_oauth_state';
-const STATE_TTL_SECONDS = 600; // 10 minutes
+const COOKIE_STATE_NAME = 'ttsdata_oauth_state';
+const COOKIE_SESSION_NAME = 'ttsdata_session';
+const STATE_COOKIE_TTL_SECONDS = 600; // 10 minutes
+const SESSION_COOKIE_TTL_SECONDS = 3600; // 1 hour
 
 /**
  * GET /api/auth/tiktok/start
  * 
  * Initiates TikTok OAuth flow.
- * Generates secure state, stores in signed HttpOnly cookie, redirects to TikTok.
+ * Validates environment, creates session, registers state, sets cookies, redirects to TikTok.
  */
 export async function GET(request: NextRequest) {
-  // Validate required configuration
-  const secret = process.env.OAUTH_STATE_SECRET;
-  if (!secret) {
-    throw new Error('OAUTH_STATE_SECRET is not configured');
+  // Validate all required configuration
+  try {
+    validateEnvironment();
+  } catch (err) {
+    console.error('OAuth start: environment validation failed');
+    throw err;
   }
 
-  const clientId = process.env.NEXT_PUBLIC_TIKTOK_CLIENT_KEY;
-  if (!clientId) {
-    throw new Error('NEXT_PUBLIC_TIKTOK_CLIENT_KEY is not configured');
-  }
+  const config = getOAuthConfig();
 
-  const redirectUri = process.env.NEXT_PUBLIC_TIKTOK_REDIRECT_URI;
-  if (!redirectUri) {
-    throw new Error('NEXT_PUBLIC_TIKTOK_REDIRECT_URI is not configured');
-  }
+  // Create session (would use request/cookies for session binding in production)
+  // For verification-only, we use a simple session binding
+  const sessionHash = createSession('verification-session');
 
-  // Generate cryptographically secure state
-  const state = randomBytes(32).toString('hex');
-  const issuedAt = Date.now();
+  // Register state in store
+  const rawState = createState(sessionHash, config.stateSecret);
 
-  // Create signed state cookie value
-  const cookieValue = createSignedStateCookie(state, issuedAt, secret);
+  // Create cookie values
+  const stateCookie = createStateCookieValue(rawState, sessionHash, config.stateSecret);
+  const sessionCookie = createSessionCookieValue(sessionHash, config.stateSecret);
 
   // Build TikTok authorization URL
   const authUrl = new URL('https://www.tiktok.com/v2/auth/authorize/');
-  authUrl.searchParams.set('client_key', clientId);
-  authUrl.searchParams.set('redirect_uri', redirectUri);
+  authUrl.searchParams.set('client_key', config.clientKey);
+  authUrl.searchParams.set('redirect_uri', config.redirectUri);
   authUrl.searchParams.set('response_type', 'code');
   authUrl.searchParams.set('scope', 'user.info.basic,user.info.stats,video.list');
-  authUrl.searchParams.set('state', state);
+  authUrl.searchParams.set('state', rawState);
 
-  // Set state cookie and redirect
+  // Set cookies and redirect
   const response = NextResponse.redirect(authUrl);
-  response.cookies.set(COOKIE_NAME, cookieValue, {
+  response.cookies.set(COOKIE_STATE_NAME, stateCookie, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
-    maxAge: STATE_TTL_SECONDS,
+    maxAge: STATE_COOKIE_TTL_SECONDS,
+    path: '/',
+  });
+  response.cookies.set(COOKIE_SESSION_NAME, sessionCookie, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: SESSION_COOKIE_TTL_SECONDS,
     path: '/',
   });
 
   return response;
-}
-
-/**
- * Create HMAC-signed state cookie value.
- * Format: state.issuedAt.hmac
- */
-export function createSignedStateCookie(state: string, issuedAt: number, secret: string): string {
-  const hmac = createHmac('sha256', secret)
-    .update(`${state}.${issuedAt}`)
-    .digest('hex');
-  return `${state}.${issuedAt}.${hmac}`;
-}
-
-/**
- * Verify and decode state cookie.
- * Returns null if invalid, expired, or tampered.
- */
-export function verifyStateCookie(
-  cookieValue: string,
-  secret: string
-): { state: string; issuedAt: number } | null {
-  if (!cookieValue) return null;
-
-  const parts = cookieValue.split('.');
-  if (parts.length !== 3) return null;
-
-  const [state, issuedAtStr, hmac] = parts;
-  const issuedAt = parseInt(issuedAtStr, 10);
-
-  if (isNaN(issuedAt)) return null;
-
-  // Check expiration
-  if (Date.now() - issuedAt > STATE_TTL_SECONDS * 1000) return null;
-
-  // Verify HMAC with constant-time comparison
-  const expectedHmac = createHmac('sha256', secret)
-    .update(`${state}.${issuedAt}`)
-    .digest('hex');
-
-  const hmacBuffer = Buffer.from(hmac, 'hex');
-  const expectedBuffer = Buffer.from(expectedHmac, 'hex');
-
-  if (hmacBuffer.length !== expectedBuffer.length) return null;
-  if (!timingSafeEqual(hmacBuffer, expectedBuffer)) return null;
-
-  return { state, issuedAt };
 }
