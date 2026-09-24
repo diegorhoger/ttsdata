@@ -1,10 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
-import { verifyStateCookie } from '../start/route';
-import { storeProbeResult } from '../../../lib/probe-store';
+import { randomBytes } from 'crypto';
+import {
+  getOAuthConfig,
+  createState,
+  consumeState,
+  storeProbeResult,
+  revokeToken,
+  sanitizeDisplayData,
+  createSessionHash,
+} from '../../../lib/oauth';
 
 const CANONICAL_URL = 'https://ttsdata.netlify.app';
-const PROBE_TTL_SECONDS = 300; // 5 minutes
 
 /**
  * GET /api/auth/tiktok/callback
@@ -13,17 +19,24 @@ const PROBE_TTL_SECONDS = 300; // 5 minutes
  * and token revocation. Verification-only — no data persistence.
  */
 export async function GET(request: NextRequest) {
-  const searchParams = request.nextUrl.searchParams;
-  const code = searchParams.get('code');
-  const state = searchParams.get('state');
-  const error = searchParams.get('error');
+  const config = getOAuthConfig();
 
   // Clear state cookie on every terminal callback
   const clearCookie = (response: NextResponse) => {
     response.cookies.set('ttsdata_oauth_state', '', { maxAge: 0, path: '/' });
   };
 
-  // Handle OAuth errors from TikTok
+  const searchParams = request.nextUrl.searchParams;
+  const code = searchParams.get('code');
+  const state = searchParams.get('state');
+  const error = searchParams.get('error');
+
+  // Create session hash from request
+  const userAgent = request.headers.get('user-agent') || '';
+  const ip = request.headers.get('x-forwarded-for') || 'unknown';
+  const sessionHash = createSessionHash(userAgent, ip, Date.now());
+
+  // Handle OAuth errors
   if (error) {
     console.error(`TikTok OAuth error: ${error}`);
     const response = NextResponse.redirect(new URL('/connect?error=oauth_failed', CANONICAL_URL));
@@ -31,21 +44,18 @@ export async function GET(request: NextRequest) {
     return response;
   }
 
-  // Validate state from signed cookie
-  const stateCookie = request.cookies.get('ttsdata_oauth_state')?.value;
-  const verifiedState = stateCookie ? verifyStateCookie(stateCookie) : null;
-
-  if (!verifiedState) {
-    console.error('OAuth callback: invalid or missing state cookie');
-    const response = NextResponse.redirect(new URL('/connect?error=invalid_state', CANONICAL_URL));
+  // Validate state
+  if (!state) {
+    const response = NextResponse.redirect(new URL('/connect?error=missing_state', CANONICAL_URL));
     clearCookie(response);
     return response;
   }
 
-  // Verify state matches exactly
-  if (state !== verifiedState.state) {
-    console.error('OAuth callback: state mismatch');
-    const response = NextResponse.redirect(new URL('/connect?error=state_mismatch', CANONICAL_URL));
+  // Consume state atomically
+  const stateResult = consumeState(state, sessionHash, config.stateSecret);
+  if (!stateResult.valid) {
+    console.error('OAuth callback: state validation failed', stateResult.error);
+    const response = NextResponse.redirect(new URL(`/connect?error=${stateResult.error}`, CANONICAL_URL));
     clearCookie(response);
     return response;
   }
@@ -63,11 +73,11 @@ export async function GET(request: NextRequest) {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
-        client_key: process.env.NEXT_PUBLIC_TIKTOK_CLIENT_KEY || '',
-        client_secret: process.env.TIKTOK_CLIENT_SECRET || '',
+        client_key: config.clientKey,
+        client_secret: config.clientSecret,
         code,
         grant_type: 'authorization_code',
-        redirect_uri: process.env.NEXT_PUBLIC_TIKTOK_REDIRECT_URI || '',
+        redirect_uri: config.redirectUri,
       }),
     });
 
@@ -100,10 +110,10 @@ export async function GET(request: NextRequest) {
       if (userInfoRes.ok) {
         probeResults.userInfo = userInfoData;
       } else {
-        probeResults.errors.push({ endpoint: 'user.info', status: userInfoRes.status, body: userInfoData });
+        probeResults.errors.push({ endpoint: 'user/info', status: userInfoRes.status, body: userInfoData });
       }
     } catch (err) {
-      probeResults.errors.push({ endpoint: 'user.info', error: String(err) });
+      probeResults.errors.push({ endpoint: 'user/info', error: String(err) });
     }
 
     // Fetch video list
@@ -123,93 +133,36 @@ export async function GET(request: NextRequest) {
       if (videoListRes.ok) {
         probeResults.videoList = videoListData;
       } else {
-        probeResults.errors.push({ endpoint: 'video.list', status: videoListRes.status, body: videoListData });
+        probeResults.errors.push({ endpoint: 'video/list', status: videoListRes.status, body: videoListData });
       }
     } catch (err) {
-      probeResults.errors.push({ endpoint: 'video.list', error: String(err) });
+      probeResults.errors.push({ endpoint: 'video/list', error: String(err) });
     }
 
-    // Check if both probes succeeded
     const bothSucceeded = probeResults.userInfo && probeResults.videoList && probeResults.errors.length === 0;
-
-    // Sanitize for display — preserve structure, redact sensitive values
     const sanitized = sanitizeDisplayData(probeResults);
 
-    // Revoke temporary token (best effort, don't fail if it errors)
-    try {
-      const revokeResponse = await fetch('https://open.tiktokapis.com/v2/oauth/revoke/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          client_key: process.env.NEXT_PUBLIC_TIKTOK_CLIENT_KEY || '',
-          client_secret: process.env.TIKTOK_CLIENT_SECRET || '',
-          token: accessToken,
-        }),
-      });
-      if (revokeResponse.ok) {
-        console.log('Temporary token revoked after verification');
-      } else {
-        console.error('Failed to revoke token:', revokeResponse.status);
-      }
-    } catch (err) {
-      console.error('Failed to revoke token:', err);
+    // Revoke token
+    const revoked = await revokeToken(accessToken, config.clientKey, config.clientSecret);
+    if (revoked) {
+      console.log('Temporary token revoked after verification');
+    } else {
+      console.error('Failed to revoke token');
     }
 
-    // Store sanitized result in server-side TTL store
-    const resultId = randomBytes(16).toString('hex');
-    storeProbeResult(resultId, {
-      data: sanitized,
-      timestamp: Date.now(),
-      scopes,
-      bothSucceeded,
-    });
+    // Store result
+    const resultId = storeProbeResult(sessionHash, sanitized, scopes, bothSucceeded);
 
     const successUrl = new URL('/oauth-result', CANONICAL_URL);
-    if (bothSucceeded) {
-      successUrl.searchParams.set('status', 'success');
-      successUrl.searchParams.set('scopes', scopes);
-    } else {
-      successUrl.searchParams.set('status', 'partial');
-      successUrl.searchParams.set('scopes', scopes);
-    }
     successUrl.searchParams.set('result_id', resultId);
 
     const response = NextResponse.redirect(successUrl);
     clearCookie(response);
     return response;
-
   } catch (err) {
     console.error('OAuth callback error:', err);
     const response = NextResponse.redirect(new URL('/connect?error=internal_error', CANONICAL_URL));
     clearCookie(response);
     return response;
   }
-}
-
-/**
- * Recursively sanitize display data.
- * Preserves exact structure, replaces sensitive values with placeholders.
- */
-function sanitizeDisplayData(data: any): any {
-  if (data === null || data === undefined) return data;
-  if (typeof data === 'string') {
-    if (data.startsWith('http')) return '<URL>';
-    if (data.length > 20 && /^[a-zA-Z0-9_-]+$/.test(data)) return '<ID>';
-    return data;
-  }
-  if (typeof data === 'number') return data;
-  if (typeof data === 'boolean') return data;
-  if (Array.isArray(data)) return data.map(sanitizeDisplayData);
-  if (typeof data === 'object') {
-    const result: any = {};
-    for (const [key, value] of Object.entries(data)) {
-      if (['open_id', 'union_id', 'display_name', 'avatar_url', 'cover_image_url'].includes(key)) {
-        result[key] = '<REDACTED>';
-      } else {
-        result[key] = sanitizeDisplayData(value);
-      }
-    }
-    return result;
-  }
-  return data;
 }
