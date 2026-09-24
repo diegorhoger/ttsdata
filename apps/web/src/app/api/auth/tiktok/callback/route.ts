@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+// Canonical URL for all OAuth redirects (never branch deployment hostname)
+const CANONICAL_URL = 'https://ttsdata.netlify.app';
+
 /**
  * TikTok OAuth Callback - Verification Only
  * 
@@ -20,14 +23,14 @@ export async function GET(request: NextRequest) {
   if (error) {
     console.error(`TikTok OAuth error: ${error} - ${errorDescription}`);
     return NextResponse.redirect(
-      new URL(`/connect?error=${encodeURIComponent(error)}&description=${encodeURIComponent(errorDescription || '')}`, request.url)
+      new URL(`/connect?error=${encodeURIComponent(error)}&description=${encodeURIComponent(errorDescription || '')}`, CANONICAL_URL)
     );
   }
 
   // Validate required parameters
   if (!code) {
     return NextResponse.redirect(
-      new URL('/connect?error=missing_code', request.url)
+      new URL('/connect?error=missing_code', CANONICAL_URL)
     );
   }
 
@@ -58,7 +61,7 @@ export async function GET(request: NextRequest) {
     if (!tokenResponse.ok) {
       console.error('Token exchange failed:', tokenData);
       return NextResponse.redirect(
-        new URL(`/connect?error=token_exchange_failed&details=${encodeURIComponent(JSON.stringify(tokenData))}`, request.url)
+        new URL(`/connect?error=token_exchange_failed&details=${encodeURIComponent(JSON.stringify(tokenData))}`, CANONICAL_URL)
       );
     }
 
@@ -70,13 +73,13 @@ export async function GET(request: NextRequest) {
 
     // Redirect to connect page with success message
     return NextResponse.redirect(
-      new URL('/connect?success=true&scope=' + encodeURIComponent(tokenData.scope || ''), request.url)
+      new URL('/connect?success=true&scope=' + encodeURIComponent(tokenData.scope || ''), CANONICAL_URL)
     );
 
   } catch (err) {
     console.error('OAuth callback error:', err);
     return NextResponse.redirect(
-      new URL('/connect?error=internal_error', request.url)
+      new URL('/connect?error=internal_error', CANONICAL_URL)
     );
   }
 }
