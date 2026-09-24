@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createHmac } from 'crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import {
   consumeOAuthState,
   storeProbeResult,
@@ -7,9 +7,8 @@ import {
   fetchUserInfo,
   fetchVideoList,
   sanitizeDisplayData,
-  createProbeResultCookie,
-  verifyProbeResultCookie,
   verifyStateCookie,
+  verifySessionCookie,
   validateEnvironment,
 } from '../../../../../lib/oauth';
 
@@ -17,15 +16,10 @@ const CANONICAL_URL = 'https://ttsdata.netlify.app';
 const STATE_COOKIE_NAME = 'ttsdata_oauth_state';
 const PROBE_COOKIE_NAME = 'ttsdata_probe_result';
 
-export async function GET(request: NextRequest) {
-  try {
-    validateEnvironment();
-  } catch (err) {
-    console.error('OAuth callback: environment validation failed');
-    const response = NextResponse.redirect(new URL('/connect?error=configuration_error', CANONICAL_URL));
-    return response;
-  }
+// Required scopes for probe operations
+const REQUIRED_SCOPES = ['user.info.basic', 'user.info.stats', 'video.list'];
 
+export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
   const code = searchParams.get('code');
   const stateParam = searchParams.get('state');
@@ -36,8 +30,10 @@ export async function GET(request: NextRequest) {
 
   const clearCookie = (response: NextResponse) => {
     response.cookies.set(STATE_COOKIE_NAME, '', { maxAge: 0, path: '/' });
+    response.cookies.set('ttsdata_session', '', { maxAge: 0, path: '/' });
   };
 
+  // Early exits with cookie clearing
   if (error) {
     console.error(`TikTok OAuth error: ${error}`);
     const response = NextResponse.redirect(new URL('/connect?error=oauth_failed', CANONICAL_URL));
@@ -64,7 +60,7 @@ export async function GET(request: NextRequest) {
     return response;
   }
 
-  // Verify state cookie to get session ID
+  // Verify state cookie - extract rawState for comparison with stateParam
   const stateVerification = verifyStateCookie(stateCookie);
   if (!stateVerification) {
     console.error('OAuth callback: invalid state cookie');
@@ -73,18 +69,40 @@ export async function GET(request: NextRequest) {
     return response;
   }
 
-  // Verify state param matches cookie
-  if (stateParam !== stateVerification.sessionId) {
+  // CONSTANT-TIME comparison: stateParam (rawState from TikTok) vs rawState in cookie
+  if (stateParam.length !== stateVerification.rawState.length) {
+    console.error('OAuth callback: state length mismatch');
+    const response = NextResponse.redirect(new URL('/connect?error=invalid_state', CANONICAL_URL));
+    clearCookie(response);
+    return response;
+  }
+  
+  const stateBuf = Buffer.from(stateParam, 'hex');
+  const rawStateBuf = Buffer.from(stateVerification.rawState, 'hex');
+  if (!timingSafeEqual(stateBuf, rawStateBuf)) {
     console.error('OAuth callback: state mismatch');
     const response = NextResponse.redirect(new URL('/connect?error=state_mismatch', CANONICAL_URL));
     clearCookie(response);
     return response;
   }
 
-  // Consume state from DB
-  const sessionHash = typeof sessionCookie === 'string' ? createSessionHash(sessionCookie) : '';
-  const stateResult = await consumeOAuthState(stateParam, sessionHash);
+  // Get session from session cookie
+  const sessionVerification = verifySessionCookie(sessionCookie);
+  if (!sessionVerification) {
+    console.error('OAuth callback: invalid session cookie');
+    const response = NextResponse.redirect(new URL('/connect?error=invalid_session', CANONICAL_URL));
+    clearCookie(response);
+    return response;
+  }
 
+  // Derive sessionHash from rawState (same as in createOAuthStateWithCookies)
+  const config = getConfig();
+  const sessionHash = createHmac('sha256', config.sessionSecret)
+    .update(stateVerification.rawState)
+    .digest('hex');
+
+  // Consume state from DB (session-bound in SQL)
+  const stateResult = await consumeOAuthState(stateVerification.rawState, sessionHash);
   if (!stateResult.success) {
     console.error('OAuth callback: state consumption failed', stateResult.error);
     const response = NextResponse.redirect(
@@ -94,11 +112,15 @@ export async function GET(request: NextRequest) {
     return response;
   }
 
+  let accessToken: string | null = null;
+  let tokenData: any = null;
+
   try {
     const clientKey = process.env.TIKTOK_CLIENT_KEY || '';
     const clientSecret = process.env.TIKTOK_CLIENT_SECRET || '';
     const redirectUri = process.env.NEXT_PUBLIC_TIKTOK_REDIRECT_URI || '';
 
+    // Token exchange
     const tokenResponse = await fetch('https://open.tiktokapis.com/v2/oauth/token/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -111,31 +133,37 @@ export async function GET(request: NextRequest) {
       }),
     });
 
-    const tokenData = await tokenResponse.json() as any;
+    tokenData = await tokenResponse.json();
 
     if (!tokenResponse.ok) {
       console.error('Token exchange failed');
-      const response = NextResponse.redirect(new URL('/connect?error=token_exchange_failed', CANONICAL_URL));
-      clearCookie(response);
-      return response;
+      return NextResponse.redirect(
+        new URL('/connect?error=token_exchange_failed', CANONICAL_URL)
+      );
     }
 
-    const accessToken = tokenData.access_token;
+    accessToken = tokenData.access_token;
     if (!accessToken) {
       console.error('Token exchange: access_token missing');
-      const response = NextResponse.redirect(new URL('/connect?error=missing_access_token', CANONICAL_URL));
-      clearCookie(response);
-      return response;
+      return NextResponse.redirect(
+        new URL('/connect?error=missing_access_token', CANONICAL_URL)
+      );
     }
 
-    const scopes = tokenData.scope || '';
-    if (!scopes.includes('user.info.basic') && !scopes.includes('user.info.stats')) {
-      console.error('Token exchange: insufficient scopes');
-      const response = NextResponse.redirect(new URL('/connect?error=insufficient_scopes', CANONICAL_URL));
-      clearCookie(response);
-      return response;
+    // Parse scopes into exact set and validate ALL required scopes
+    const rawScopes = tokenData.scope || '';
+    const scopeSet = new Set(rawScopes.split(',').map(s => s.trim()).filter(Boolean));
+
+    for (const required of REQUIRED_SCOPES) {
+      if (!scopeSet.has(required)) {
+        console.error('Token exchange: missing required scope', required);
+        return NextResponse.redirect(
+          new URL('/connect?error=insufficient_scopes', CANONICAL_URL)
+        );
+      }
     }
 
+    // Run probes
     const probeResults: any = { userInfo: null, videoList: null, errors: [] };
 
     const userInfoResult = await fetchUserInfo(accessToken);
@@ -155,15 +183,9 @@ export async function GET(request: NextRequest) {
     const bothSucceeded = probeResults.userInfo && probeResults.videoList && probeResults.errors.length === 0;
     const sanitized = sanitizeDisplayData(probeResults);
 
-    const revoked = await revokeToken(accessToken);
-    if (revoked) {
-      console.log('Temporary token revoked');
-    } else {
-      console.error('Failed to revoke token');
-    }
-
-    const resultId = await storeProbeResult(sessionHash, sanitized, scopes, bothSucceeded);
-    const probeCookie = createProbeResultCookie(resultId, typeof sessionCookie === "string" ? sessionCookie : "");
+    // Store probe result (session-bound in SQL)
+    const resultId = await storeProbeResult(stateVerification.rawState, sessionHash, sanitized, rawScopes, bothSucceeded);
+    const probeCookie = createProbeResultCookie(stateVerification.rawState, sessionVerification.sessionId);
 
     const successUrl = new URL('/oauth-result', CANONICAL_URL);
     successUrl.searchParams.set('result_id', resultId);
@@ -179,22 +201,17 @@ export async function GET(request: NextRequest) {
     });
 
     return response;
-  } catch (err) {
-    console.error('OAuth callback error:', err);
-    const response = NextResponse.redirect(new URL('/connect?error=internal_error', CANONICAL_URL));
-    clearCookie(response);
-    return response;
+  } finally {
+    // ALWAYS revoke token in finally block
+    if (accessToken) {
+      const revoked = await revokeToken(accessToken);
+      if (revoked) {
+        console.log('Temporary token revoked');
+      } else {
+        console.error('Failed to revoke token');
+      }
+    }
   }
-}
-
-function createSessionHash(sessionCookie: string): string {
-  const config = getConfig();
-  const parts = sessionCookie.split('.');
-  if (parts.length !== 3) return '';
-  const sessionId = parts[0];
-  return createHmac('sha256', config.sessionSecret)
-    .update(sessionId)
-    .digest('hex');
 }
 
 function getConfig() {
