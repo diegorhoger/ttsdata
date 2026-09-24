@@ -3,7 +3,7 @@ export default function TermsPage() {
     <div className="mx-auto max-w-4xl px-4 py-16">
       <h1 className="text-4xl font-bold text-slate-900 mb-8">Termos de Serviço</h1>
       <div className="prose prose-slate max-w-none space-y-6 text-slate-700">
-        <p><strong>Última atualização:</strong> 16 de setembro de 2024</p>
+        <p><strong>Última atualização:</strong> 24 de setembro de 2026</p>
 
         <h2 className="text-2xl font-semibold text-slate-900">1. Aceitação dos Termos</h2>
         <p>
@@ -41,8 +41,8 @@ export default function TermsPage() {
 
         <h2 className="text-2xl font-semibold text-slate-900">6. APIs de Terceiros</h2>
         <p>
-          A plataforma integra-se à TikTok Display API e, quando autorizado, à TikTok Shop Affiliate API.
-          O uso destas APIs está sujeito aos termos e políticas da TikTok.
+          A plataforma integra-se à TikTok Display API.
+          O uso desta API está sujeito aos termos e políticas da TikTok.
         </p>
 
         <h2 className="text-2xl font-semibold text-slate-900">7. Limitação de Responsabilidade</h2>
@@ -66,7 +66,7 @@ export default function TermsPage() {
 
         <h2 className="text-2xl font-semibold text-slate-900">10. Contato</h2>
         <p>
-          Para questões sobre estes termos: legal@ttsdata.com.br
+          Para questões sobre estes termos: contato@ttsdata.netlify.app
         </p>
       </div>
     </div>

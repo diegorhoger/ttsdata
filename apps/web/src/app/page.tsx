@@ -3,11 +3,11 @@ export default function HomePage() {
     <div className="mx-auto max-w-7xl px-4 py-16">
       <section className="text-center mb-16">
         <h1 className="text-5xl font-bold text-slate-900 mb-6">
-          Encontre o produto certo para promover
+          Suas métricas do TikTok em um só lugar
         </h1>
         <p className="text-xl text-slate-600 max-w-2xl mx-auto mb-8">
-          TTSData analisa dados oficiais da TikTok Shop para mostrar quais produtos 
-          estão em alta, por que estão movendo, e que conteúdo criar.
+          TTSData mostra a performance do seu perfil e dos seus vídeos públicos 
+          usando dados autorizados pela TikTok Display API.
         </p>
         <div className="flex gap-4 justify-center">
           <a href="/register" className="rounded-lg bg-sky-600 px-6 py-3 text-lg font-medium text-white hover:bg-sky-700">

@@ -3,7 +3,7 @@ export default function PrivacyPage() {
     <div className="mx-auto max-w-4xl px-4 py-16">
       <h1 className="text-4xl font-bold text-slate-900 mb-8">Política de Privacidade</h1>
       <div className="prose prose-slate max-w-none space-y-6 text-slate-700">
-        <p><strong>Última atualização:</strong> 16 de setembro de 2024</p>
+        <p><strong>Última atualização:</strong> 24 de setembro de 2026</p>
 
         <h2 className="text-2xl font-semibold text-slate-900">1. Informações Coletadas</h2>
         <p>
@@ -40,7 +40,6 @@ export default function PrivacyPage() {
         <h2 className="text-2xl font-semibold text-slate-900">4. Compartilhamento</h2>
         <p>
           Não compartilhamos dados individuais de usuários com terceiros.
-          Dados agregados e anonimizados podem ser utilizados para análises de mercado.
         </p>
 
         <h2 className="text-2xl font-semibold text-slate-900">5. Direitos do Usuário</h2>
@@ -55,7 +54,7 @@ export default function PrivacyPage() {
 
         <h2 className="text-2xl font-semibold text-slate-900">6. Contato</h2>
         <p>
-          Para questões sobre privacidade, entre em contato: privacidade@ttsdata.com.br
+          Para questões sobre privacidade, entre em contato: contato@ttsdata.netlify.app
         </p>
       </div>
     </div>
