@@ -32,15 +32,15 @@ function getConfig(): OAuthConfig {
   return { clientKey, clientSecret, redirectUri, stateSecret, sessionSecret };
 }
 
-const REPOSITORY_INSTANCE = new WeakMap<object, OAuthRepository>();
+let REPOSITORY_INSTANCE: OAuthRepository | null = null;
 
 function getRepository(): OAuthRepository {
   // Use a global singleton keyed by DB URL - one repo per DB connection
   const databaseUrl = process.env.DATABASE_URL || 'postgresql://localhost:5432/ttsdata';
-  let repo = REPOSITORY_INSTANCE.get(databaseUrl);
+  let repo = REPOSITORY_INSTANCE;
   if (!repo) {
     repo = new OAuthRepository(databaseUrl, getConfig());
-    REPOSITORY_INSTANCE.set(databaseUrl, repo);
+    REPOSITORY_INSTANCE = repo;
   }
   return repo;
 }
