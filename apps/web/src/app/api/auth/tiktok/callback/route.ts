@@ -9,8 +9,9 @@ import {
   sanitizeDisplayData,
   createProbeResultCookie,
   verifyProbeResultCookie,
+  verifyStateCookie,
   validateEnvironment,
-} from '../../../../../../lib/oauth';
+} from '../../../../../lib/oauth';
 
 const CANONICAL_URL = 'https://ttsdata.netlify.app';
 const STATE_COOKIE_NAME = 'ttsdata_oauth_state';
@@ -73,7 +74,7 @@ export async function GET(request: NextRequest) {
   }
 
   // Verify state param matches cookie
-  if (stateParam !== stateVerification.resultId) {
+  if (stateParam !== stateVerification.sessionId) {
     console.error('OAuth callback: state mismatch');
     const response = NextResponse.redirect(new URL('/connect?error=state_mismatch', CANONICAL_URL));
     clearCookie(response);
@@ -81,7 +82,7 @@ export async function GET(request: NextRequest) {
   }
 
   // Consume state from DB
-  const sessionHash = createSessionHash(sessionCookie);
+  const sessionHash = typeof sessionCookie === 'string' ? createSessionHash(sessionCookie) : '';
   const stateResult = await consumeOAuthState(stateParam, sessionHash);
 
   if (!stateResult.success) {
@@ -162,7 +163,7 @@ export async function GET(request: NextRequest) {
     }
 
     const resultId = await storeProbeResult(sessionHash, sanitized, scopes, bothSucceeded);
-    const probeCookie = createProbeResultCookie(resultId, sessionCookie);
+    const probeCookie = createProbeResultCookie(resultId, typeof sessionCookie === "string" ? sessionCookie : "");
 
     const successUrl = new URL('/oauth-result', CANONICAL_URL);
     successUrl.searchParams.set('result_id', resultId);

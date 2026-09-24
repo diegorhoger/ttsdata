@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   consumeProbeResult,
   verifyProbeResultCookie,
-} from '../../../lib/oauth';
+} from '@ttsdata/db';
 import { createHmac } from 'node:crypto';
 
 export async function GET(request: NextRequest) {
