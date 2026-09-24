@@ -5,7 +5,6 @@ CREATE TABLE IF NOT EXISTS oauth_states (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   state_hash VARCHAR(64) NOT NULL,
   session_hash VARCHAR(64) NOT NULL,
-  state_value VARCHAR(128) NOT NULL,
   issued_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
   expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
   consumed_at TIMESTAMP WITH TIME ZONE
