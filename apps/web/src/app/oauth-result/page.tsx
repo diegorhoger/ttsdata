@@ -3,7 +3,7 @@ import {
   consumeProbeResult,
   verifyProbeResultCookie,
 } from '../../../lib/oauth';
-nimport { createHmac } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
