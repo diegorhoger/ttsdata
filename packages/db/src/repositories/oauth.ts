@@ -10,9 +10,10 @@
  */
 
 import { drizzle } from 'drizzle-orm/node-postgres';
+import { eq, isNull, gt } from 'drizzle-orm';
 import { Pool } from 'pg';
 import * as schema from '../schema';
-import { createHmac, timingSafeEqual } from 'crypto';
+import { createHmac } from 'crypto';
 
 export interface OAuthConfig {
   clientKey: string;
@@ -62,7 +63,6 @@ export interface ConsumeProbeResultResult {
 
 export class OAuthRepository {
   private pool: Pool;
-  private schema: typeof schema;
   private config: OAuthConfig;
 
   constructor(
@@ -70,7 +70,6 @@ export class OAuthRepository {
     config: OAuthConfig
   ) {
     this.pool = new Pool({ connectionString: databaseUrl });
-    this.schema = schema;
     this.config = config;
   }
 
@@ -101,29 +100,25 @@ export class OAuthRepository {
 
   /**
    * Create OAuth state record.
-   * Stores hashed state value and session hash.
    */
   async createState(params: CreateStateParams): Promise<string> {
     const db = await this.getDb();
     
     const stateHash = this.hashValue(params.stateValue);
     
-    // Insert state record
     await db.insert(schema.oauthStates)
       .values({
         stateHash,
         sessionHash: this.hashSession(params.sessionHash),
         stateValue: params.stateValue,
         expiresAt: params.expiresAt,
-      })
-      .returning({ id: schema.oauthStates.id });
+      });
     
     return stateHash;
   }
 
   /**
    * Consume state atomically using conditional UPDATE.
-   * Returns success status and error if any.
    */
   async consumeState(
     rawState: string,
@@ -134,18 +129,15 @@ export class OAuthRepository {
     const stateHash = this.hashValue(rawState);
     const sessionHashHashed = this.hashSession(sessionHash);
 
-    // Atomic conditional update: only consume if not already consumed and not expired
+    // Atomic conditional update
     const result = await db
       .update(schema.oauthStates)
       .set({
         consumedAt: new Date(),
       })
-      .where(
-        (table) =>
-          schema.oauthStates.stateHash.equals(stateHash) &&
-          schema.oauthStates.consumedAt.isNull() &&
-          schema.oauthStates.expiresAt.greaterThan(new Date())
-      )
+      .where(eq(schema.oauthStates.stateHash, stateHash))
+      .where(isNull(schema.oauthStates.consumedAt))
+      .where(gt(schema.oauthStates.expiresAt, new Date()))
       .returning({
         id: schema.oauthStates.id,
         stateValue: schema.oauthStates.stateValue,
@@ -155,15 +147,13 @@ export class OAuthRepository {
 
     if (result.length === 0) {
       // Check if state exists but is expired
-      const expiredCheck = await db
+      const existing = await db
         .select()
         .from(schema.oauthStates)
-        .where(
-          schema.oauthStates.stateHash.equals(stateHash)
-        )
+        .where(eq(schema.oauthStates.stateHash, stateHash))
         .limit(1);
 
-      if (expiredCheck.length === 0) {
+      if (existing.length === 0) {
         return { success: false, error: 'state_not_found' };
       }
 
@@ -194,8 +184,7 @@ export class OAuthRepository {
   async createProbeResult(params: CreateProbeResultParams): Promise<string> {
     const db = await this.getDb();
     
-    const resultId = randomBytes(16).toString('hex');
-    const resultIdHash = this.hashSession(resultId); // Reuse hashing for consistency
+    const resultIdHash = this.hashSession(params.resultId);
     
     await db.insert(schema.oauthProbeResults)
       .values({
@@ -205,15 +194,13 @@ export class OAuthRepository {
         scopes: params.scopes,
         bothSucceeded: params.bothSucceeded,
         expiresAt: params.expiresAt,
-      })
-      .returning({ id: schema.oauthProbeResults.id });
+      });
     
-    return resultId;
+    return params.resultId;
   }
 
   /**
    * Consume probe result atomically.
-   * Returns probe data if successful.
    */
   async consumeProbeResult(
     resultId: string,
@@ -230,12 +217,9 @@ export class OAuthRepository {
       .set({
         consumedAt: new Date(),
       })
-      .where(
-        (table) =>
-          schema.oauthProbeResults.resultIdHash.equals(resultIdHash) &&
-          schema.oauthProbeResults.consumedAt.isNull() &&
-          schema.oauthProbeResults.expiresAt.greaterThan(new Date())
-      )
+      .where(eq(schema.oauthProbeResults.resultIdHash, resultIdHash))
+      .where(isNull(schema.oauthProbeResults.consumedAt))
+      .where(gt(schema.oauthProbeResults.expiresAt, new Date()))
       .returning({
         id: schema.oauthProbeResults.id,
         data: schema.oauthProbeResults.data,
@@ -246,15 +230,13 @@ export class OAuthRepository {
 
     if (result.length === 0) {
       // Check if expired
-      const expiredCheck = await db
+      const existing = await db
         .select()
         .from(schema.oauthProbeResults)
-        .where(
-          schema.oauthProbeResults.resultIdHash.equals(resultIdHash)
-        )
+        .where(eq(schema.oauthProbeResults.resultIdHash, resultIdHash))
         .limit(1);
 
-      if (expiredCheck.length === 0) {
+      if (existing.length === 0) {
         return { success: false, error: 'result_not_found' };
       }
 
