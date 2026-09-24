@@ -19,8 +19,7 @@ export default function TikTokConnectPage() {
 
   // Check for success/error from OAuth callback
   const [oauthResult, setOauthResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-  // Connection state is now server-verified only
-
+  
   useEffect(() => {
     // Check if already connected
     // Connection state is now verified server-side
@@ -86,34 +85,7 @@ export default function TikTokConnectPage() {
           </div>
         </div>
 
-        {isConnected ? (
-          <div className="space-y-4">
-            <div className="inline-flex items-center gap-3 rounded-lg bg-emerald-50 border border-emerald-200 px-6 py-4">
-              <svg className="w-6 h-6 text-emerald-600" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
-              </svg>
-              <span className="text-emerald-800 font-medium">Conta TikTok conectada</span>
-            </div>
-            <p className="text-sm text-slate-500">
-              Sua conta está conectada e pronta para uso.
-            </p>
-            <div className="flex gap-3">
-              <a
-                href="/products"
-                className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-6 py-3 font-medium text-white hover:bg-sky-700 transition-colors"
-              >
-                Ver Produtos
-              </a>
-              <a
-                href="/settings"
-                className="inline-flex items-center gap-2 rounded-lg bg-slate-100 px-6 py-3 font-medium text-slate-700 hover:bg-slate-200 transition-colors"
-              >
-                Configurações
-              </a>
-            </div>
-          </div>
-        ) : (
-          <button
+        <button
             onClick={handleConnect}
             className="inline-flex items-center gap-3 rounded-lg bg-slate-900 px-8 py-4 text-lg font-medium text-white hover:bg-slate-800 transition-colors"
           >
@@ -122,7 +94,6 @@ export default function TikTokConnectPage() {
             </svg>
             Conectar com TikTok
           </button>
-        )}
 
         <p className="mt-6 text-sm text-slate-500">
           Ao conectar, você concorda com nossos{" "}
