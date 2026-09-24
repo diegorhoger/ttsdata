@@ -2,17 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   createOAuthState,
   validateEnvironment,
-} from '../../../../lib/oauth';
+} from '../../../lib/oauth';
 
 /**
  * GET /api/auth/tiktok/start
  * 
  * Initiates TikTok OAuth flow.
- * Validates environment, creates OAuth state with DB persistence,
- * sets session and state cookies, redirects to TikTok.
  */
 export async function GET(request: NextRequest) {
-  // Validate required environment configuration
   try {
     validateEnvironment();
   } catch (err) {
@@ -20,10 +17,8 @@ export async function GET(request: NextRequest) {
     throw err;
   }
 
-  // Create OAuth state with DB persistence
   const { state, sessionId } = await createOAuthState(request);
 
-  // Build TikTok authorization URL
   const clientKey = process.env.TIKTOK_CLIENT_KEY || '';
   const redirectUri = process.env.NEXT_PUBLIC_TIKTOK_REDIRECT_URI || '';
 
@@ -34,6 +29,5 @@ export async function GET(request: NextRequest) {
   authUrl.searchParams.set('scope', 'user.info.basic,user.info.stats,video.list');
   authUrl.searchParams.set('state', state);
 
-  // Redirect to TikTok
   return NextResponse.redirect(authUrl);
 }

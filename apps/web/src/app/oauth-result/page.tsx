@@ -1,10 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { consumeProbeResult, verifyProbeResultCookie } from '../../lib/oauth';
-import { cookies } from 'next/headers';
+import {
+  consumeProbeResult,
+  verifyProbeResultCookie,
+} from '../../lib/oauth';
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
-  let resultId = searchParams.get('result_id');
+  const resultIdParam = searchParams.get('result_id');
+
+  const probeCookie = request.cookies.get('ttsdata_probe_result')?.value;
+
+  let resultId: string | null = resultIdParam;
+  let sessionId: string | null = null;
+
+  if (probeCookie) {
+    const verified = verifyProbeResultCookie(probeCookie);
+    if (verified) {
+      resultId = verified.resultId;
+      sessionId = verified.sessionId;
+    }
+  }
 
   if (!resultId) {
     return NextResponse.json(
@@ -13,21 +28,14 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // Read cookies
-  const probeCookie = request.cookies.get('ttsdata_probe_result')?.value;
-  const sessionCookie = request.cookies.get('ttsdata_session')?.value;
-
-  // Verify probe cookie
-  if (probeCookie) {
-    const sessionHash = sessionCookie ? Buffer.from(sessionCookie, 'base64url').toString('hex') : '';
-    const verified = verifyProbeResultCookie(probeCookie, sessionHash);
-    if (verified) {
-      resultId = verified.resultId;
-    }
+  if (!sessionId) {
+    return NextResponse.json(
+      { error: 'Session not found' },
+      { status: 400 }
+    );
   }
 
-  // Consume probe result from DB (atomically)
-  const sessionHash = sessionCookie ? Buffer.from(sessionCookie, 'base64url').toString('hex') : '';
+  const sessionHash = createSessionHash(sessionId);
   const result = await consumeProbeResult(resultId, sessionHash);
 
   if (!result.success) {
@@ -38,9 +46,21 @@ export async function GET(request: NextRequest) {
   }
 
   return NextResponse.json({
-    status: result.probeRecord?.bothSucceeded ? 'success' : 'partial',
-    scopes: result.probeRecord?.scopes || '',
-    data: result.probeRecord?.data,
-    bothSucceeded: result.probeRecord?.bothSucceeded,
+    status: result.bothSucceeded ? 'success' : 'partial',
+    scopes: result.scopes || '',
+    data: result.data,
+    bothSucceeded: result.bothSucceeded,
   });
+}
+
+function createSessionHash(sessionId: string): string {
+  const config = getConfig();
+  return createHmac('sha256', config.sessionSecret)
+    .update(sessionId)
+    .digest('hex');
+}
+
+function getConfig() {
+  const sessionSecret = process.env.OAUTH_SESSION_SECRET || '';
+  return { sessionSecret };
 }
