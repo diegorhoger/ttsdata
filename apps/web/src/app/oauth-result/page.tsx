@@ -1,4 +1,4 @@
-import { verifyProbeCookie } from "../api/auth/tiktok/callback/route";
+import { getProbeResult, deleteProbeResult } from '../../lib/probe-store';
 
 export default function OAuthResultPage({ searchParams }: { searchParams: { result_id?: string } }) {
   const resultId = searchParams.result_id;
@@ -15,7 +15,7 @@ export default function OAuthResultPage({ searchParams }: { searchParams: { resu
     );
   }
 
-  const result = probeStore.get(resultId);
+  const result = getProbeResult(resultId);
 
   if (!result) {
     return (
@@ -30,7 +30,7 @@ export default function OAuthResultPage({ searchParams }: { searchParams: { resu
   }
 
   // Delete result immediately after retrieval (single-use)
-  probeStore.delete(resultId);
+  deleteProbeResult(resultId);
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-16">

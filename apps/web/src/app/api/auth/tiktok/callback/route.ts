@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createHmac } from 'crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import { verifyStateCookie } from '../start/route';
-import { storeProbeResult } from '../../lib/probe-store';
+import { storeProbeResult, getProbeResult, deleteProbeResult } from '../../../lib/probe-store';
 
 const CANONICAL_URL = 'https://ttsdata.netlify.app';
-const PROBE_COOKIE_NAME = 'ttsdata_probe_result';
 const PROBE_TTL_SECONDS = 300; // 5 minutes
 
 /**
@@ -195,16 +194,6 @@ function sanitizeDisplayData(data: any): any {
     return result;
   }
   return data;
-}
-
-/**
- * Create signed probe result cookie.
- */
-function createSignedProbeCookie(data: any, timestamp: number): string {
-  const secret = process.env.OAUTH_STATE_SECRET || 'development-secret-change-in-production';
-  const payload = JSON.stringify({ data, timestamp });
-  const hmac = createHmac('sha256', secret).update(payload).digest('hex');
-  return Buffer.from(`${payload}.${hmac}`).toString('base64url');
 }
 
 /**
