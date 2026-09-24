@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   createOAuthState,
   validateEnvironment,
-} from '../../../lib/oauth';
+} from '../../../../lib/oauth';
 
 /**
  * GET /api/auth/tiktok/start

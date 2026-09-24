@@ -4,7 +4,7 @@ import { cookies } from 'next/headers';
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
-  const resultId = searchParams.get('result_id');
+  let resultId = searchParams.get('result_id');
 
   if (!resultId) {
     return NextResponse.json(

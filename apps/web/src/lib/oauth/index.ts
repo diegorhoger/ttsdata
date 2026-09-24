@@ -19,8 +19,8 @@ import {
   type OAuthConfig,
   type ConsumeStateResult,
   type ConsumeProbeResultResult,
-} from '@ttsdata/db/src/repositories/oauth';
-import { createHmac } from 'crypto';
+} from '../../../../packages/db/src/repositories/oauth';
+import { createHmac, randomBytes } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 
 // ============================================================================
