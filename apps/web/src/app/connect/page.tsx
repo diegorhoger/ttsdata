@@ -103,15 +103,35 @@ export default function TikTokConnectPage() {
           </div>
         </div>
 
-        <button
-          onClick={handleConnect}
-          className="inline-flex items-center gap-3 rounded-lg bg-slate-900 px-8 py-4 text-lg font-medium text-white hover:bg-slate-800 transition-colors"
-        >
-          <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64 2.93 2.93 0 0 1 .88.13V9.4a6.84 6.84 0 0 0-1-.05A6.33 6.33 0 0 0 5 20.1a6.34 6.34 0 0 0 10.86-4.43v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-1-.1z"/>
-          </svg>
-          Conectar com TikTok
-        </button>
+        {oauthResult?.type === 'success' ? (
+          <div className="space-y-4">
+            <div className="inline-flex items-center gap-3 rounded-lg bg-emerald-50 border border-emerald-200 px-6 py-4">
+              <svg className="w-6 h-6 text-emerald-600" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+              </svg>
+              <span className="text-emerald-800 font-medium">Conta TikTok conectada com sucesso!</span>
+            </div>
+            <p className="text-sm text-slate-500">
+              Escopos autorizados: {oauthResult.message.replace('Autorização concluída! Escopos: ', '')}
+            </p>
+            <a
+              href="/products"
+              className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-6 py-3 font-medium text-white hover:bg-sky-700 transition-colors"
+            >
+              Ver Produtos
+            </a>
+          </div>
+        ) : (
+          <button
+            onClick={handleConnect}
+            className="inline-flex items-center gap-3 rounded-lg bg-slate-900 px-8 py-4 text-lg font-medium text-white hover:bg-slate-800 transition-colors"
+          >
+            <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64 2.93 2.93 0 0 1 .88.13V9.4a6.84 6.84 0 0 0-1-.05A6.33 6.33 0 0 0 5 20.1a6.34 6.34 0 0 0 10.86-4.43v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-1-.1z"/>
+            </svg>
+            Conectar com TikTok
+          </button>
+        )}
 
         <p className="mt-6 text-sm text-slate-500">
           Ao conectar, você concorda com nossos{" "}
