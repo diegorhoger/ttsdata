@@ -9,7 +9,7 @@ import {
   sanitizeDisplayData,
   verifyStateCookie,
   verifySessionCookie,
-  createProbeResultCookie,
+  createProbeCookie,
   validateEnvironment,
 } from '../../../../../lib/oauth';
 
@@ -189,11 +189,11 @@ export async function GET(request: NextRequest) {
     }
 
     const bothSucceeded = probeResults.userInfo && probeResults.videoList && probeResults.errors.length === 0;
-    const sanitized = sanitizeDisplayData(probeResults);
+    const sanitized = sanitizeDisplayData(probeResults) as Record<string, unknown>;
 
     // Store probe result (session-bound in SQL)
     const resultId = await storeProbeResult(stateVerification.rawState, sessionHash, sanitized, rawScopes, bothSucceeded);
-    const probeCookie = createProbeResultCookie(stateVerification.rawState, sessionVerification.sessionId);
+    const probeCookie = createProbeCookie(stateVerification.rawState, sessionVerification.sessionId);
 
     const successUrl = new URL('/oauth-result', CANONICAL_URL);
     successUrl.searchParams.set('result_id', resultId);

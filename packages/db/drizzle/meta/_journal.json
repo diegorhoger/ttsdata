@@ -8,6 +8,13 @@
       "when": 1789222719557,
       "tag": "0000_fast_invaders",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1759845600000,
+      "tag": "0000_oauth_tables",
+      "breakpoints": true
     }
   ]
 }
