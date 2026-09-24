@@ -6,7 +6,7 @@
  */
 
 import { OAuthRepository, type OAuthConfig } from '../../../../packages/db/src/repositories/oauth';
-import { createHmac, randomBytes } from 'crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 
 const STATE_COOKIE_NAME = 'ttsdata_oauth_state';
@@ -175,7 +175,7 @@ export async function createOAuthState(request: NextRequest): Promise<{
   const { sessionId, stateCookieValue, sessionCookieValue } = createSessionCookies();
   
   // Generate raw state value
-  const rawState = crypto.randomBytes(32).toString('hex');
+  const rawState = randomBytes(32).toString('hex');
   
   // Store in DB
   const expiresAt = new Date(Date.now() + STATE_COOKIE_TTL_SECONDS * 1000);
@@ -229,7 +229,7 @@ export async function storeProbeResult(
   bothSucceeded: boolean
 ): Promise<string> {
   const repository = getRepository();
-  const resultId = crypto.randomBytes(16).toString('hex');
+  const resultId = randomBytes(16).toString('hex');
   const expiresAt = new Date(Date.now() + PROBE_COOKIE_TTL_SECONDS * 1000);
   
   await repository.createProbeResult({
