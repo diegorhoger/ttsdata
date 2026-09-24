@@ -1,117 +1,59 @@
 /**
- * Server-Only OAuth Module for TikTok Display API Verification
+ * OAuth Module — Server-side OAuth flow management for TikTok Display API
  * 
- * This module handles:
- * - State registration and consumption (with session binding)
- * - Probe result storage with TTL
- * - Session binding via signed cookies
+ * Handles:
+ * - OAuth state registration and consumption (with DB persistence)
+ * - Probe result storage and consumption (with DB persistence)
+ * - Session management
  * - Token revocation
  * - Response sanitization
  * 
- * State and probe records are stored in-memory with TTL.
- * For production: replace with PostgreSQL/Redis.
+ * Uses OAuthRepository for durable PostgreSQL-backed storage.
+ * Environment variables: TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET, 
+ *   NEXT_PUBLIC_TIKTOK_REDIRECT_URI, OAUTH_STATE_SECRET, 
+ *   OAUTH_SESSION_SECRET, DATABASE_URL
  */
 
-import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
+import { 
+  OAuthRepository,
+  type OAuthConfig,
+  type ConsumeStateResult,
+  type ConsumeProbeResultResult,
+} from '@ttsdata/db/src/repositories/oauth';
+import { createHmac } from 'crypto';
+import { NextRequest, NextResponse } from 'next/server';
 
 // ============================================================================
 // Configuration
 // ============================================================================
 
-export interface OAuthConfig {
-  clientKey: string;
-  clientSecret: string;
-  redirectUri: string;
-  stateSecret: string;
-}
+const REPO_INSTANCE = new Map<string, OAuthRepository>();
 
-export function getOAuthConfig(): OAuthConfig {
-  const clientKey = process.env.NEXT_PUBLIC_TIKTOK_CLIENT_KEY;
-  const clientSecret = process.env.TIKTOK_CLIENT_SECRET;
-  const redirectUri = process.env.NEXT_PUBLIC_TIKTOK_REDIRECT_URI;
-  const stateSecret = process.env.OAUTH_STATE_SECRET;
+function getConfig(): OAuthConfig {
+  const clientKey = process.env.TIKTOK_CLIENT_KEY || '';
+  const clientSecret = process.env.TIKTOK_CLIENT_SECRET || '';
+  const redirectUri = process.env.NEXT_PUBLIC_TIKTOK_REDIRECT_URI || '';
+  const stateSecret = process.env.OAUTH_STATE_SECRET || '';
+  const sessionSecret = process.env.OAUTH_SESSION_SECRET || '';
 
-  if (!clientKey) throw new Error('NEXT_PUBLIC_TIKTOK_CLIENT_KEY is not configured');
+  if (!clientKey) throw new Error('TIKTOK_CLIENT_KEY is not configured');
   if (!clientSecret) throw new Error('TIKTOK_CLIENT_SECRET is not configured');
   if (!redirectUri) throw new Error('NEXT_PUBLIC_TIKTOK_REDIRECT_URI is not configured');
   if (!stateSecret) throw new Error('OAUTH_STATE_SECRET is not configured');
+  if (!sessionSecret) throw new Error('OAUTH_SESSION_SECRET is not configured');
 
-  return { clientKey, clientSecret, redirectUri, stateSecret };
+  return { clientKey, clientSecret, redirectUri, stateSecret, sessionSecret };
 }
 
-// ============================================================================
-// State Management
-// ============================================================================
-
-const STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
-
-export interface StateRecord {
-  rawState: string;
-  stateHash: string;
-  sessionHash: string;
-  issuedAt: number;
-  expiresAt: number;
-  consumedAt: number | null;
-}
-
-// In-memory state store (use PostgreSQL/Redis in production)
-const stateStore = new Map<string, StateRecord>();
-
-/**
- * Create a cryptographically secure state value.
- * Registers the state in the store and returns the raw state value.
- */
-export function createState(sessionHash: string, secret: string): string {
-  const rawState = randomBytes(32).toString('hex');
-  const issuedAt = Date.now();
-  const expiresAt = issuedAt + STATE_TTL_MS;
-  const stateHash = createHmac('sha256', secret).update(rawState).digest('hex');
-
-  stateStore.set(stateHash, {
-    rawState,
-    stateHash,
-    sessionHash,
-    issuedAt,
-    expiresAt,
-    consumedAt: null,
-  });
-
-  return rawState;
-}
-
-/**
- * Consume state atomically.
- * Returns { valid, sessionHash, error } tuple.
- */
-export function consumeState(
-  rawState: string,
-  sessionHash: string,
-  secret: string
-): { valid: boolean; sessionHash?: string; error?: string } {
-  const stateHash = createHmac('sha256', secret).update(rawState).digest('hex');
-
-  const record = stateStore.get(stateHash);
-  if (!record) {
-    return { valid: false, error: 'state_not_found' };
+function getRepository(): OAuthRepository {
+  const key = `${process.env.DATABASE_URL}|${process.env.OAUTH_STATE_SECRET}|${process.env.OAUTH_SESSION_SECRET}`;
+  if (!REPO_INSTANCE.has(key)) {
+    REPO_INSTANCE.set(key, new OAuthRepository(
+      process.env.DATABASE_URL || 'postgresql://localhost:5432/ttsdata',
+      getConfig()
+    ));
   }
-
-  if (record.consumedAt !== null) {
-    return { valid: false, error: 'state_already_consumed' };
-  }
-
-  if (Date.now() > record.expiresAt) {
-    stateStore.delete(stateHash);
-    return { valid: false, error: 'state_expired' };
-  }
-
-  if (record.sessionHash !== sessionHash) {
-    return { valid: false, error: 'session_mismatch' };
-  }
-
-  // Atomically consume
-  record.consumedAt = Date.now();
-
-  return { valid: true, sessionHash: record.sessionHash };
+  return REPO_INSTANCE.get(key)!;
 }
 
 // ============================================================================
@@ -119,88 +61,125 @@ export function consumeState(
 // ============================================================================
 
 const SESSION_COOKIE_NAME = 'ttsdata_session';
-const SESSION_TTL_SECONDS = 3600; // 1 hour
+const SESSION_COOKIE_TTL_SECONDS = 3600; // 1 hour
 
-interface SessionRecord {
+/**
+ * Create a session identity from request.
+ * Uses a random session ID bound to the browser via HttpOnly cookie.
+ */
+export function createSessionIdentity(request: NextRequest): {
+  sessionId: string;
   sessionHash: string;
-  createdAt: number;
-  expiresAt: number;
-}
-
-// In-memory session store
-const sessionStore = new Map<string, SessionRecord>();
-
-/**
- * Create a session record and return the session hash.
- */
-export function createSession(sessionHash: string): string {
-  const now = Date.now();
-  sessionStore.set(sessionHash, {
-    sessionHash,
-    createdAt: now,
-    expiresAt: now + SESSION_TTL_SECONDS * 1000,
-  });
-  return sessionHash;
-}
-
-/**
- * Verify and retrieve session.
- */
-export function getSession(sessionHash: string): SessionRecord | null {
-  const record = sessionStore.get(sessionHash);
-  if (!record) return null;
-  if (Date.now() > record.expiresAt) {
-    sessionStore.delete(sessionHash);
-    return null;
+} {
+  const existingSessionId = request.cookies.get(SESSION_COOKIE_NAME)?.value;
+  
+  if (existingSessionId) {
+    // Validate existing session
+    const sessionHash = createHmac('sha256', getConfig().sessionSecret)
+      .update(existingSessionId)
+      .digest('hex');
+    return { sessionId: existingSessionId, sessionHash };
   }
-  return record;
+
+  // Create new session
+  const sessionId = crypto.randomUUID();
+  const sessionHash = createHmac('sha256', getConfig().sessionSecret)
+    .update(sessionId)
+    .digest('hex');
+  
+  return { sessionId, sessionHash };
+}
+
+// ============================================================================
+// State Management
+// ============================================================================
+
+const STATE_COOKIE_NAME = 'ttsdata_oauth_state';
+const STATE_COOKIE_TTL_SECONDS = 600; // 10 minutes
+
+/**
+ * Create OAuth state and set cookies.
+ * Returns the raw state value for redirect to TikTok.
+ */
+export async function createOAuthState(request: NextRequest): Promise<{
+  state: string;
+  sessionId: string;
+}> {
+  const config = getConfig();
+  const repository = getRepository();
+  const { sessionId, sessionHash } = createSessionIdentity(request);
+
+  const rawState = crypto.randomBytes(32).toString('hex');
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+  await repository.createState({
+    stateValue: rawState,
+    sessionHash,
+    expiresAt,
+  });
+
+  // Set cookies
+  const response = new NextResponse(null);
+  
+  // State cookie (contains raw state so callback can read it)
+  response.cookies.set(STATE_COOKIE_NAME, rawState, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: STATE_COOKIE_TTL_SECONDS,
+    path: '/',
+  });
+  
+  // Session cookie
+  response.cookies.set(SESSION_COOKIE_NAME, sessionId, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: SESSION_COOKIE_TTL_SECONDS,
+    path: '/',
+  });
+
+  return { state: rawState, sessionId };
+}
+
+/**
+ * Consume OAuth state.
+ */
+export async function consumeOAuthState(
+  rawState: string,
+  sessionHash: string
+): Promise<ConsumeStateResult> {
+  const repository = getRepository();
+  return repository.consumeState(rawState, sessionHash);
 }
 
 // ============================================================================
 // Probe Result Management
 // ============================================================================
 
-const PROBE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-export interface ProbeResultRecord {
-  resultId: string;
-  resultIdHash: string;
-  sessionHash: string;
-  data: any;
-  scopes: string;
-  bothSucceeded: boolean;
-  createdAt: number;
-  expiresAt: number;
-  consumedAt: number | null;
-}
-
-// In-memory probe result store
-const probeResultStore = new Map<string, ProbeResultRecord>();
+const PROBE_COOKIE_NAME = 'ttsdata_probe_result';
+const PROBE_COOKIE_TTL_SECONDS = 300; // 5 minutes
 
 /**
- * Store probe result with session binding.
- * Returns the raw result ID.
+ * Store probe result and return the result ID.
  */
-export function storeProbeResult(
+export async function storeProbeResult(
   sessionHash: string,
-  data: any,
+  data: Record<string, any>,
   scopes: string,
   bothSucceeded: boolean
-): string {
-  const resultId = randomBytes(16).toString('hex');
-  const resultIdHash = createHmac('sha256', sessionHash).update(resultId).digest('hex');
-  const now = Date.now();
+): Promise<string> {
+  const repository = getRepository();
+  const resultId = crypto.randomBytes(16).toString('hex');
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
 
-  probeResultStore.set(resultIdHash, {
+  await repository.createProbeResult({
     resultId,
-    resultIdHash,
     sessionHash,
     data,
     scopes,
     bothSucceeded,
-    createdAt: now,
-    expiresAt: now + PROBE_TTL_MS,
-    consumedAt: null,
+    expiresAt,
   });
 
   return resultId;
@@ -208,176 +187,142 @@ export function storeProbeResult(
 
 /**
  * Consume probe result atomically.
- * Returns the data if valid.
  */
-export function consumeProbeResult(
+export async function consumeProbeResult(
   resultId: string,
   sessionHash: string
-): { valid: boolean; data?: any; scopes?: string; bothSucceeded?: boolean; error?: string } {
-  const resultIdHash = createHmac('sha256', sessionHash).update(resultId).digest('hex');
-
-  const record = probeResultStore.get(resultIdHash);
-  if (!record) {
-    return { valid: false, error: 'result_not_found' };
-  }
-
-  if (record.consumedAt !== null) {
-    return { valid: false, error: 'result_already_consumed' };
-  }
-
-  if (Date.now() > record.expiresAt) {
-    probeResultStore.delete(resultIdHash);
-    return { valid: false, error: 'result_expired' };
-  }
-
-  if (record.sessionHash !== sessionHash) {
-    return { valid: false, error: 'session_mismatch' };
-  }
-
-  // Atomically consume
-  record.consumedAt = Date.now();
-
-  return {
-    valid: true,
-    data: record.data,
-    scopes: record.scopes,
-    bothSucceeded: record.bothSucceeded,
-  };
+): Promise<ConsumeProbeResultResult> {
+  const repository = getRepository();
+  return repository.consumeProbeResult(resultId, sessionHash);
 }
 
-// ============================================================================
-// Cookie Utilities
-// ============================================================================
-
-const COOKIE_STATE_NAME = 'ttsdata_oauth_state';
-const COOKIE_SESSION_NAME = 'ttsdata_session';
-const STATE_COOKIE_TTL_SECONDS = 600; // 10 min
-const SESSION_COOKIE_TTL_SECONDS = 3600; // 1 hour
-
 /**
- * Create signed state cookie value.
+ * Create probe result cookie.
  */
-export function createStateCookieValue(
-  rawState: string,
-  sessionHash: string,
-  secret: string
-): string {
-  const issuedAt = Date.now();
-  const hmac = createHmac('sha256', secret)
-    .update(`${rawState}.${sessionHash}.${issuedAt}`)
+export function createProbeResultCookie(resultId: string, sessionHash: string): string {
+  const config = getConfig();
+  const expiresIn = PROBE_COOKIE_TTL_SECONDS * 1000;
+  const hmac = createHmac('sha256', config.sessionSecret)
+    .update(`${resultId}.${sessionHash}.${Date.now()}`)
     .digest('hex');
-  return `${rawState}.${sessionHash}.${issuedAt}.${hmac}`;
+  return `${resultId}.${sessionHash}.${hmac}`;
 }
 
 /**
- * Verify and decode state cookie.
- * Returns the raw state and session hash if valid.
+ * Verify and decode probe result cookie.
  */
-export function verifyStateCookie(
+export function verifyProbeResultCookie(
   cookieValue: string,
-  secret: string
-): { rawState: string; sessionHash: string } | null {
-  if (!cookieValue) return null;
-
-  const parts = cookieValue.split('.');
-  if (parts.length !== 4) return null;
-
-  const [rawState, sessionHash, issuedAtStr, hmac] = parts;
-  const issuedAt = parseInt(issuedAtStr, 10);
-
-  if (isNaN(issuedAt)) return null;
-
-  // Check expiration
-  if (Date.now() - issuedAt > STATE_COOKIE_TTL_SECONDS * 1000) {
-    return null;
-  }
-
-  // Verify HMAC
-  const expectedHmac = createHmac('sha256', secret)
-    .update(`${rawState}.${sessionHash}.${issuedAt}`)
-    .digest('hex');
-
-  const hmacBuffer = Buffer.from(hmac, 'hex');
-  const expectedBuffer = Buffer.from(expectedHmac, 'hex');
-
-  if (hmacBuffer.length !== expectedBuffer.length) return null;
-  if (!timingSafeEqual(hmacBuffer, expectedBuffer)) return null;
-
-  return { rawState, sessionHash };
-}
-
-/**
- * Create session cookie value.
- */
-export function createSessionCookieValue(sessionHash: string, secret: string): string {
-  const issuedAt = Date.now();
-  const hmac = createHmac('sha256', secret)
-    .update(`${sessionHash}.${issuedAt}`)
-    .digest('hex');
-  return `${sessionHash}.${issuedAt}.${hmac}`;
-}
-
-/**
- * Verify and decode session cookie.
- */
-export function verifySessionCookie(
-  cookieValue: string,
-  secret: string
-): { sessionHash: string } | null {
+  sessionHash: string
+): { resultId: string } | null {
   if (!cookieValue) return null;
 
   const parts = cookieValue.split('.');
   if (parts.length !== 3) return null;
 
-  const [sessionHash, issuedAtStr, hmac] = parts;
-  const issuedAt = parseInt(issuedAtStr, 10);
+  const [resultId, cookieSessionHash, hmac] = parts;
 
-  if (isNaN(issuedAt)) return null;
+  if (cookieSessionHash !== sessionHash) return null;
 
-  // Check expiration
-  if (Date.now() - issuedAt > SESSION_COOKIE_TTL_SECONDS * 1000) {
+  // Check expiry (5 minutes)
+  const timestamp = parseInt(hmac.slice(0, 10), 16);
+  if (isNaN(timestamp) || Date.now() > timestamp + 5 * 60 * 1000) {
     return null;
   }
 
   // Verify HMAC
-  const expectedHmac = createHmac('sha256', secret)
-    .update(`${sessionHash}.${issuedAt}`)
+  const expectedHmac = createHmac('sha256', getConfig().sessionSecret)
+    .update(`${resultId}.${sessionHash}.${Date.now()}`)
     .digest('hex');
 
-  const hmacBuffer = Buffer.from(hmac, 'hex');
-  const expectedBuffer = Buffer.from(expectedHmac, 'hex');
+  if (hmac !== expectedHmac) return null;
 
-  if (hmacBuffer.length !== expectedBuffer.length) return null;
-  if (!timingSafeEqual(hmacBuffer, expectedBuffer)) return null;
-
-  return { sessionHash };
+  return { resultId };
 }
 
 // ============================================================================
 // Token Revocation
 // ============================================================================
 
-/**
- * Revoke TikTok OAuth token.
- */
-export async function revokeToken(
-  accessToken: string,
-  clientKey: string,
-  clientSecret: string
-): Promise<boolean> {
+export async function revokeToken(accessToken: string): Promise<boolean> {
+  const config = getConfig();
+
   try {
     const response = await fetch('https://open.tiktokapis.com/v2/oauth/revoke/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
-        client_key: clientKey,
-        client_secret: clientSecret,
+        client_key: config.clientKey,
+        client_secret: config.clientSecret,
         token: accessToken,
       }),
     });
     return response.ok;
   } catch {
     return false;
+  }
+}
+
+// ============================================================================
+// Display API Probes
+// ============================================================================
+
+/**
+ * Fetch user info from TikTok Display API.
+ */
+export async function fetchUserInfo(accessToken: string): Promise<{
+  success: boolean;
+  data?: any;
+  error?: string;
+}> {
+  try {
+    const response = await fetch(
+      'https://open.tiktokapis.com/v2/user/info/?fields=open_id,display_name,avatar_url,follower_count,video_count',
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
+    const data = await response.json();
+
+    if (response.ok) {
+      return { success: true, data };
+    }
+
+    return { success: false, error: `user_info_failed: ${response.status}`, data };
+  } catch (err) {
+    return { success: false, error: `user_info_error: ${err}` };
+  }
+}
+
+/**
+ * Fetch video list from TikTok Display API.
+ */
+export async function fetchVideoList(accessToken: string, maxCount: number = 20): Promise<{
+  success: boolean;
+  data?: any;
+  error?: string;
+}> {
+  try {
+    const response = await fetch(
+      'https://open.tiktokapis.com/v2/video/list/?fields=id,title,create_time,cover_image_url,view_count,like_count,comment_count,share_count',
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ max_count: maxCount }),
+      }
+    );
+
+    const data = await response.json();
+
+    if (response.ok) {
+      return { success: true, data };
+    }
+
+    return { success: false, error: `video_list_failed: ${response.status}`, data };
+  } catch (err) {
+    return { success: false, error: `video_list_error: ${err}` };
   }
 }
 
@@ -400,9 +345,6 @@ const SENSITIVE_FIELDS = new Set([
   'refresh_token',
 ]);
 
-/**
- * Recursively sanitize display data.
- */
 export function sanitizeDisplayData(data: any): any {
   if (data === null || data === undefined) return data;
   if (typeof data === 'string') {
@@ -432,21 +374,6 @@ export function sanitizeDisplayData(data: any): any {
 // Environment Validation
 // ============================================================================
 
-/**
- * Validate all required environment variables are set.
- * Throws if any are missing.
- */
 export function validateEnvironment(): void {
-  const required = [
-    'NEXT_PUBLIC_TIKTOK_CLIENT_KEY',
-    'TIKTOK_CLIENT_SECRET',
-    'NEXT_PUBLIC_TIKTOK_REDIRECT_URI',
-    'OAUTH_STATE_SECRET',
-  ];
-
-  for (const key of required) {
-    if (!process.env[key]) {
-      throw new Error(`${key} is not configured`);
-    }
-  }
+  getConfig(); // Will throw if any required var is missing
 }

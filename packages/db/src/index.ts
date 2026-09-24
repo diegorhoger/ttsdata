@@ -4,3 +4,5 @@ export {
   productCreatorLinks, opportunityScores, saturationScores,
   trendSignals, watchlists, watchlistItems, alertRules, alertHistory,
 } from './schema';
+
+export { OAuthRepository } from './repositories/oauth';
