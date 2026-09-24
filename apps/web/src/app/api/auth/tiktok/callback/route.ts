@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createHmac } from 'crypto';
 import { verifyStateCookie } from '../start/route';
+import { storeProbeResult } from '../../lib/probe-store';
 
 const CANONICAL_URL = 'https://ttsdata.netlify.app';
 const PROBE_COOKIE_NAME = 'ttsdata_probe_result';
@@ -145,7 +146,7 @@ export async function GET(request: NextRequest) {
 
     // Store sanitized result in server-side TTL store (not cookie)
     const resultId = randomBytes(16).toString('hex');
-    probeStore.set(resultId, {
+    storeProbeResult(resultId, {
       data: sanitized,
       timestamp: Date.now(),
       scopes,
