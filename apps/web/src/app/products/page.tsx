@@ -26,14 +26,19 @@ interface ProductsResponse {
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
 async function getProducts(searchParams: Record<string, string>): Promise<ProductsResponse> {
-  const params = new URLSearchParams(searchParams);
-  const res = await fetch(`${API_URL}/api/products?${params.toString()}`, {
-    cache: 'no-store',
-  });
-  if (!res.ok) {
+  try {
+    const params = new URLSearchParams(searchParams);
+    const res = await fetch(`${API_URL}/api/products?${params.toString()}`, {
+      cache: 'no-store',
+    });
+    if (!res.ok) {
+      return { data: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 0 } };
+    }
+    return res.json();
+  } catch (err) {
+    console.error('Failed to fetch products:', err);
     return { data: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 0 } };
   }
-  return res.json();
 }
 
 function formatCurrency(value: number, currency: string): string {
