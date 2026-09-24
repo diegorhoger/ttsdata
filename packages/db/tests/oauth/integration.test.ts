@@ -41,8 +41,8 @@ describe('OAuth Concurrent Consumption (PostgreSQL)', () => {
   });
 
   it('should allow exactly one concurrent consumer of a state record', async () => {
-    const rawState = 'test-state-' + Date.now();
-    const sessionHash = hash('session-1');
+    const rawState = 'test-state-' + Date.now() + '-' + Math.random().toString(36).substring(7);
+    const sessionHash = hash('session-' + Date.now() + '-1');
     const stateHash = hash(rawState);
 
     // Insert a state record directly
@@ -76,9 +76,10 @@ describe('OAuth Concurrent Consumption (PostgreSQL)', () => {
   });
 
   it('should allow exactly one concurrent consumer of a probe result record', async () => {
-    const rawState = 'test-result-' + Date.now();
-    const sessionHash = hash('session-2');
-    const resultIdHash = hash('result-1');
+    const rawState = 'test-result-' + Date.now() + '-' + Math.random().toString(36).substring(7);
+    const sessionHash = hash('session-' + Date.now() + '-2');
+    const resultId = 'result-' + Date.now() + '-' + Math.random().toString(36).substring(7);
+    const resultIdHash = hash(resultId);
 
     // Insert a result record
     await pool.query(
@@ -110,7 +111,7 @@ describe('OAuth Concurrent Consumption (PostgreSQL)', () => {
   });
 
   it('should not allow wrong session to consume a valid record', async () => {
-    const rawState = 'test-wrong-session-' + Date.now();
+    const rawState = 'test-wrong-session-' + Date.now() + '-' + Math.random().toString(36).substring(7);
     const correctSessionHash = hash('correct-session');
     const wrongSessionHash = hash('wrong-session');
     const stateHash = hash(rawState);
@@ -147,8 +148,8 @@ describe('OAuth Concurrent Consumption (PostgreSQL)', () => {
   });
 
   it('should distinguish expired, consumed and valid records', async () => {
-    const rawState = 'test-expired-' + Date.now();
-    const sessionHash = hash('session-3');
+    const rawState = 'test-expired-' + Date.now() + '-' + Math.random().toString(36).substring(7);
+    const sessionHash = hash('session-' + Date.now() + '-3');
     const stateHash = hash(rawState);
 
     // Insert an already-expired record
@@ -168,8 +169,8 @@ describe('OAuth Concurrent Consumption (PostgreSQL)', () => {
   });
 
   it('should not store raw state, session ID or result ID in the database', async () => {
-    const rawState = 'test-no-raw-' + Date.now();
-    const sessionHash = hash('session-4');
+    const rawState = 'test-no-raw-' + Date.now() + '-' + Math.random().toString(36).substring(7);
+    const sessionHash = hash('session-' + Date.now() + '-4');
     const stateHash = hash(rawState);
 
     // Insert a state record
