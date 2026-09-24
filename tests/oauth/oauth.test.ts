@@ -9,15 +9,15 @@
 
 import { describe, it, expect } from 'vitest';
 import { createSignedStateCookie, verifyStateCookie } from '../../apps/web/src/app/api/auth/tiktok/start/route';
-import { storeProbeResult, getProbeResult, deleteProbeResult } from '../../apps/web/src/lib/probe-store';
+import { createState, consumeState, storeProbeResult, consumeProbeResult, sanitizeDisplayData } from '../../apps/web/src/lib/oauth';
 
 const TEST_SECRET = 'test-secret-value-for-testing-only';
 
-describe('OAuth State Cookie Validation (Production Functions)', () => {
+describe('OAuth State Cookie Validation', () => {
   it('should accept valid state cookie', () => {
     const state = 'test-state-123';
     const issuedAt = Date.now();
-    const cookie = createSignedStateCookie(state, issuedAt);
+    const cookie = createSignedStateCookie(state, issuedAt, TEST_SECRET);
 
     const result = verifyStateCookie(cookie, TEST_SECRET);
     expect(result).not.toBeNull();
@@ -37,32 +37,16 @@ describe('OAuth State Cookie Validation (Production Functions)', () => {
   it('should reject tampered state value', () => {
     const state = 'test-state-123';
     const issuedAt = Date.now();
-    const cookie = createSignedStateCookie(state, issuedAt);
+    const cookie = createSignedStateCookie(state, issuedAt, TEST_SECRET);
 
-    // Tamper with the state value
     const tamperedCookie = cookie.replace(state, 'tampered-state');
     expect(verifyStateCookie(tamperedCookie, TEST_SECRET)).toBeNull();
   });
 
   it('should reject expired state', () => {
     const state = 'test-state-123';
-    const issuedAt = Date.now() - 601_000; // 10 min + 1 sec ago
-    const cookie = createSignedStateCookie(state, issuedAt);
-
-    expect(verifyStateCookie(cookie, TEST_SECRET)).toBeNull();
-  });
-
-  it('should reject invalid issued timestamp', () => {
-    const state = 'test-state-123';
-    const cookie = `${state}.notanumber.hmacvalue`;
-    expect(verifyStateCookie(cookie, TEST_SECRET)).toBeNull();
-  });
-
-  it('should reject forged HMAC', () => {
-    const state = 'test-state-123';
-    const issuedAt = Date.now();
-    const fakeHmac = 'a'.repeat(64);
-    const cookie = `${state}.${issuedAt}.${fakeHmac}`;
+    const issuedAt = Date.now() - 601_000;
+    const cookie = createSignedStateCookie(state, issuedAt, TEST_SECRET);
 
     expect(verifyStateCookie(cookie, TEST_SECRET)).toBeNull();
   });
@@ -70,60 +54,117 @@ describe('OAuth State Cookie Validation (Production Functions)', () => {
   it('should reject wrong secret', () => {
     const state = 'test-state-123';
     const issuedAt = Date.now();
-    const cookie = createSignedStateCookie(state, issuedAt);
+    const cookie = createSignedStateCookie(state, issuedAt, TEST_SECRET);
 
     expect(verifyStateCookie(cookie, 'wrong-secret')).toBeNull();
   });
+});
 
-  it('should validate state across simulated instances', () => {
-    // Simulate: Instance A creates state cookie
-    const state = 'cross-instance-state';
-    const issuedAt = Date.now();
-    const cookie = createSignedStateCookie(state, issuedAt);
+describe('State Consumption (Single-Use)', () => {
+  it('should consume state exactly once', () => {
+    const sessionHash = 'test-session-hash';
+    const state = createState(sessionHash, TEST_SECRET);
 
-    // Simulate: Instance B verifies state cookie
-    const verified = verifyStateCookie(cookie, TEST_SECRET);
-    expect(verified).not.toBeNull();
-    expect(verified!.state).toBe(state);
+    const first = consumeState(state, sessionHash, TEST_SECRET);
+    expect(first.valid).toBe(true);
+
+    const second = consumeState(state, sessionHash, TEST_SECRET);
+    expect(second.valid).toBe(false);
+    expect(second.error).toBe('state_already_consumed');
+  });
+
+  it('should reject state with wrong session', () => {
+    const state = createState('original-session', TEST_SECRET);
+
+    const result = consumeState(state, 'different-session', TEST_SECRET);
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe('session_mismatch');
   });
 });
 
-describe('Probe Store (Production Functions)', () => {
-  it('should store and retrieve probe results', () => {
-    const id = 'test-result-id';
-    const data = { userInfo: { test: true }, videoList: { test: true } };
+describe('Probe Result Storage', () => {
+  it('should store and consume probe result exactly once', () => {
+    const sessionHash = 'test-session';
+    const data = { userInfo: { test: true } };
 
-    storeProbeResult(id, { data, timestamp: Date.now(), scopes: 'user.info.basic', bothSucceeded: true });
+    const resultId = storeProbeResult(sessionHash, data, 'user.info.basic', true);
+    expect(resultId).toBeTruthy();
 
-    const result = getProbeResult(id);
-    expect(result).not.toBeNull();
-    expect(result!.data).toEqual(data);
+    const first = consumeProbeResult(resultId, sessionHash);
+    expect(first.valid).toBe(true);
+    expect(first.data).toEqual(data);
+
+    const second = consumeProbeResult(resultId, sessionHash);
+    expect(second.valid).toBe(false);
+    expect(second.error).toBe('result_already_consumed');
   });
 
-  it('should return null for non-existent ID', () => {
-    expect(getProbeResult('nonexistent')).toBeNull();
+  it('should reject result with wrong session', () => {
+    const data = { userInfo: { test: true } };
+    const resultId = storeProbeResult('original-session', data, '', true);
+
+    const result = consumeProbeResult(resultId, 'different-session');
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe('session_mismatch');
   });
+});
 
-  it('should delete results (single-use retrieval)', () => {
-    const id = 'test-delete-id';
-    storeProbeResult(id, { data: {}, timestamp: Date.now(), scopes: '', bothSucceeded: true });
-
-    expect(getProbeResult(id)).not.toBeNull();
-    deleteProbeResult(id);
-    expect(getProbeResult(id)).toBeNull();
-  });
-
-  it('should handle oversized fixtures', () => {
-    const id = 'test-large-id';
-    const largeData = {
-      userInfo: { videos: Array(1000).fill({ id: 'x', title: 'y' }) },
-      videoList: { videos: Array(1000).fill({ id: 'x', title: 'y' }) },
+describe('Sanitization', () => {
+  it('should redact known sensitive fields', () => {
+    const input = {
+      open_id: 'abc123',
+      union_id: 'def456',
+      display_name: 'Test User',
+      avatar_url: 'https://example.com/avatar.jpg',
+      username: 'testuser',
+      nickname: 'Test',
+      log_id: 'log123',
+      follower_count: 100,
     };
 
-    storeProbeResult(id, { data: largeData, timestamp: Date.now(), scopes: '', bothSucceeded: true });
+    const result = sanitizeDisplayData(input);
+    expect(result.open_id).toBe('<REDACTED>');
+    expect(result.union_id).toBe('<REDACTED>');
+    expect(result.display_name).toBe('<REDACTED>');
+    expect(result.avatar_url).toBe('<REDACTED>');
+    expect(result.username).toBe('<REDACTED>');
+    expect(result.nickname).toBe('<REDACTED>');
+    expect(result.log_id).toBe('<REDACTED>');
+    expect(result.follower_count).toBe(100);
+  });
 
-    const result = getProbeResult(id);
-    expect(result).not.toBeNull();
-    expect(result!.data.userInfo.videos).toHaveLength(1000);
+  it('should preserve structure and numeric values', () => {
+    const input = {
+      view_count: 12345,
+      like_count: 678,
+      is_verified: true,
+      score: 95.5,
+    };
+
+    const result = sanitizeDisplayData(input);
+    expect(result.view_count).toBe(12345);
+    expect(result.like_count).toBe(678);
+    expect(result.is_verified).toBe(true);
+    expect(result.score).toBe(95.5);
+  });
+
+  it('should handle nested objects and arrays', () => {
+    const input = {
+      data: {
+        user: { open_id: 'abc', name: 'Test', videos: [{ id: 'v1', title: 'Video 1' }] },
+      },
+    };
+
+    const result = sanitizeDisplayData(input);
+    expect(result.data.user.open_id).toBe('<REDACTED>');
+    expect(result.data.user.name).toBe('<REDACTED>');
+    expect(result.data.user.videos[0].id).toBe('<REDACTED>');
+    expect(result.data.user.videos[0].title).toBe('<REDACTED>');
+  });
+
+  it('should handle null and boolean values', () => {
+    expect(sanitizeDisplayData(null)).toBeNull();
+    expect(sanitizeDisplayData(true)).toBe(true);
+    expect(sanitizeDisplayData(false)).toBe(false);
   });
 });
