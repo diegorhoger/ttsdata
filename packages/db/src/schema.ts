@@ -321,3 +321,38 @@ export const alertHistory = pgTable('alert_history', {
   delivered: boolean('delivered').notNull().default(false),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+// ============================================================
+// OAuth state and probe result tables
+// ============================================================
+
+export const oauthStates = pgTable('oauth_states', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  stateHash: varchar('state_hash', { length: 64 }).notNull(),
+  sessionHash: varchar('session_hash', { length: 64 }).notNull(),
+  stateValue: varchar('state_value', { length: 128 }).notNull(),
+  issuedAt: timestamp('issued_at', { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  consumedAt: timestamp('consumed_at', { withTimezone: true }),
+}, (t) => ({
+  uniqueStateHash: uniqueIndex('oauth_states_state_hash_idx').on(t.stateHash),
+  expiredStates: index('oauth_states_expired_idx').on(t.expiresAt),
+}));
+
+export const oauthProbeResults = pgTable('oauth_probe_results', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  resultIdHash: varchar('result_id_hash', { length: 64 }).notNull(),
+  sessionHash: varchar('session_hash', { length: 64 }).notNull(),
+  data: jsonb('data').notNull(),
+  scopes: varchar('scopes', { length: 255 }).notNull().default(''),
+  bothSucceeded: boolean('both_succeeded').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  consumedAt: timestamp('consumed_at', { withTimezone: true }),
+}, (t) => ({
+  uniqueResultIdHash: uniqueIndex('oauth_probe_results_result_id_hash_idx').on(t.resultIdHash),
+  expiredResults: index('oauth_probe_results_expired_idx').on(t.expiresAt),
+}));
+
+export type OAuthState = typeof oauthStates.$inferSelect;
+export type OAuthProbeResult = typeof oauthProbeResults.$inferSelect;
