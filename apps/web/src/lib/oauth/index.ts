@@ -3,10 +3,11 @@
  * 
  * Provides helper functions for OAuth routes.
  * All DB operations go through OAuthRepository.
+ * IMPORTANT: Uses project's existing DB connection pattern.
  */
 
-import { OAuthRepository, type OAuthConfig } from '@ttsdata/db';
-import { createHmac, randomBytes } from 'node:crypto';
+import { OAuthRepository } from '@ttsdata/db';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 
 const STATE_COOKIE_NAME = 'ttsdata_oauth_state';
@@ -16,7 +17,7 @@ const SESSION_COOKIE_TTL_SECONDS = 3600;
 const PROBE_COOKIE_NAME = 'ttsdata_probe_result';
 const PROBE_COOKIE_TTL_SECONDS = 300;
 
-function getConfig(): OAuthConfig {
+function getConfig() {
   const clientKey = process.env.TIKTOK_CLIENT_KEY || '';
   const clientSecret = process.env.TIKTOK_CLIENT_SECRET || '';
   const redirectUri = process.env.NEXT_PUBLIC_TIKTOK_REDIRECT_URI || '';
@@ -32,83 +33,88 @@ function getConfig(): OAuthConfig {
   return { clientKey, clientSecret, redirectUri, stateSecret, sessionSecret };
 }
 
-let REPOSITORY_INSTANCE: OAuthRepository | null = null;
-
-function getRepository(): OAuthRepository {
-  // Use a global singleton keyed by DB URL - one repo per DB connection
+// Use project's existing DB connection pattern - get Pool from environment
+function getOAuthRepository(): OAuthRepository {
   const databaseUrl = process.env.DATABASE_URL || 'postgresql://localhost:5432/ttsdata';
-  let repo = REPOSITORY_INSTANCE;
-  if (!repo) {
-    repo = new OAuthRepository(databaseUrl, getConfig());
-    REPOSITORY_INSTANCE = repo;
-  }
-  return repo;
+  return new OAuthRepository(databaseUrl, getConfig());
 }
 
 /**
- * Create session cookies and return session identity.
+ * Create session cookies.
+ * Uses rawState for BOTH the state cookie (for verification) and derives sessionId from it.
+ * This ensures the callback can compare stateParam (from TikTok) with the cookie's rawState.
  */
-export function createSessionCookies(): {
+export function createSessionCookies(rawState: string): {
   sessionId: string;
-  sessionHash: string;
   stateCookieValue: string;
   sessionCookieValue: string;
 } {
   const config = getConfig();
-  const sessionId = randomBytes(32).toString('hex');
-  const sessionHash = createHmac('sha256', config.sessionSecret)
-    .update(sessionId)
+  
+  // Derive sessionId from rawState using HMAC
+  const sessionId = createHmac('sha256', config.sessionSecret)
+    .update(rawState)
     .digest('hex');
 
-  const stateCookieValue = createStateCookieValue(sessionId, config.stateSecret);
+  // State cookie contains rawState (for callback to compare with stateParam)
+  const stateCookieValue = createStateCookieValue(rawState, config.stateSecret);
+  
+  // Session cookie contains sessionId (for probe result binding)
   const sessionCookieValue = createSessionCookieValue(sessionId, config.sessionSecret);
 
-  return { sessionId, sessionHash, stateCookieValue, sessionCookieValue };
+  return { sessionId, stateCookieValue, sessionCookieValue };
 }
 
-function createStateCookieValue(sessionId: string, stateSecret: string): string {
+function createStateCookieValue(rawState: string, stateSecret: string): string {
   const issuedAt = Date.now();
   const hmac = createHmac('sha256', stateSecret)
-    .update(`${sessionId}.${issuedAt}`)
+    .update(rawState + '.' + issuedAt)
     .digest('hex');
-  return `${sessionId}.${issuedAt}.${hmac}`;
+  return `${rawState}.${issuedAt}.${hmac}`;
 }
 
 function createSessionCookieValue(sessionId: string, sessionSecret: string): string {
   const issuedAt = Date.now();
   const hmac = createHmac('sha256', sessionSecret)
-    .update(`${sessionId}.${issuedAt}`)
+    .update(sessionId + '.' + issuedAt)
     .digest('hex');
   return `${sessionId}.${issuedAt}.${hmac}`;
 }
 
 /**
- * Verify state cookie and extract session ID.
+ * Verify state cookie and extract rawState.
+ * The state cookie contains rawState.issuedAt.hmac
+ * We verify the HMAC and return rawState for comparison with stateParam.
  */
-export function verifyStateCookie(cookieValue: string): { sessionId: string } | null {
+export function verifyStateCookie(cookieValue: string): { rawState: string } | null {
   if (!cookieValue) return null;
   
   const config = getConfig();
   const parts = cookieValue.split('.');
   if (parts.length !== 3) return null;
   
-  const [sessionId, issuedAtStr, hmac] = parts;
+  const [rawState, issuedAtStr, hmac] = parts;
   const issuedAt = parseInt(issuedAtStr, 10);
   
   if (isNaN(issuedAt)) return null;
   if (Date.now() - issuedAt > STATE_COOKIE_TTL_SECONDS * 1000) return null;
   
+  const data = rawState + '.' + issuedAt;
   const expectedHmac = createHmac('sha256', config.stateSecret)
-    .update(`${sessionId}.${issuedAt}`)
+    .update(data)
     .digest('hex');
   
-  if (hmac !== expectedHmac) return null;
+  const hmacBuf = Buffer.from(hmac, 'hex');
+  const expectedBuf = Buffer.from(expectedHmac, 'hex');
+  if (hmacBuf.length !== expectedBuf.length) return null;
+  if (!timingSafeEqual(hmacBuf, expectedBuf)) return null;
   
-  return { sessionId };
+  return { rawState };
 }
 
 /**
- * Verify session cookie and extract session ID.
+ * Verify session cookie and extract sessionId.
+ * The session cookie contains sessionId.issuedAt.hmac
  */
 export function verifySessionCookie(cookieValue: string): { sessionId: string } | null {
   if (!cookieValue) return null;
@@ -123,47 +129,60 @@ export function verifySessionCookie(cookieValue: string): { sessionId: string } 
   if (isNaN(issuedAt)) return null;
   if (Date.now() - issuedAt > SESSION_COOKIE_TTL_SECONDS * 1000) return null;
   
+  const data = sessionId + '.' + issuedAt;
   const expectedHmac = createHmac('sha256', config.sessionSecret)
-    .update(`${sessionId}.${issuedAt}`)
+    .update(data)
     .digest('hex');
   
-  if (hmac !== expectedHmac) return null;
+  const hmacBuf = Buffer.from(hmac, 'hex');
+  const expectedBuf = Buffer.from(expectedHmac, 'hex');
+  if (hmacBuf.length !== expectedBuf.length) return null;
+  if (!timingSafeEqual(hmacBuf, expectedBuf)) return null;
   
   return { sessionId };
 }
 
 /**
  * Create probe result cookie.
+ * Contains: resultId.sessionId.issuedAt.hmac (all serialized)
  */
-export function createProbeResultCookie(resultId: string, sessionId: string): string {
+export function createProbeResultCookie(rawState: string, sessionId: string): string {
   const config = getConfig();
   const issuedAt = Date.now();
+  const serialized = `${rawState}.${sessionId}.${issuedAt}`;
   const hmac = createHmac('sha256', config.sessionSecret)
-    .update(`${resultId}.${sessionId}.${issuedAt}`)
+    .update(serialized)
     .digest('hex');
-  return `${resultId}.${sessionId}.${hmac}`;
+  return `${serialized}.${hmac}`;
 }
 
 /**
  * Verify and decode probe result cookie.
+ * Returns rawState (for reference) and sessionId.
  */
-export function verifyProbeResultCookie(cookieValue: string): { resultId: string; sessionId: string } | null {
+export function verifyProbeResultCookie(cookieValue: string): { rawState: string; sessionId: string } | null {
   if (!cookieValue) return null;
   
   const config = getConfig();
   const parts = cookieValue.split('.');
-  if (parts.length !== 3) return null;
+  if (parts.length !== 4) return null;
   
-  const [resultId, sessionId, hmac] = parts;
-  const issuedAt = Date.now();
+  const [rawState, sessionId, issuedAtStr, hmac] = parts;
+  const issuedAt = parseInt(issuedAtStr, 10);
   
+  if (isNaN(issuedAt)) return null;
+  
+  const data = rawState + '.' + sessionId + '.' + issuedAt;
   const expectedHmac = createHmac('sha256', config.sessionSecret)
-    .update(`${resultId}.${sessionId}.${issuedAt}`)
+    .update(data)
     .digest('hex');
   
-  if (hmac !== expectedHmac) return null;
+  const hmacBuf = Buffer.from(hmac, 'hex');
+  const expectedBuf = Buffer.from(expectedHmac, 'hex');
+  if (hmacBuf.length !== expectedBuf.length) return null;
+  if (!timingSafeEqual(hmacBuf, expectedBuf)) return null;
   
-  return { resultId, sessionId };
+  return { rawState, sessionId };
 }
 
 // ============================================================================
@@ -172,29 +191,53 @@ export function verifyProbeResultCookie(cookieValue: string): { resultId: string
 
 /**
  * Create OAuth state and redirect to TikTok.
+ * Returns the auth URL and a response with cookies set.
+ * IMPORTANT: Caller MUST use the returned response (or copy its cookies)
+ * for the redirect, otherwise cookies are lost.
  */
-export async function createOAuthState(request: NextRequest): Promise<{
-  state: string;
-  sessionId: string;
+export async function createOAuthStateWithCookies(request: NextRequest): Promise<{
+  authUrl: string;
+  response: NextResponse;
 }> {
   const config = getConfig();
-  const repository = getRepository();
-  const { sessionId, stateCookieValue, sessionCookieValue } = createSessionCookies();
+  const repository = getOAuthRepository();
   
-  // Generate raw state value
+  // Generate rawState - this is what TikTok receives as state param
+  // AND what goes in the state cookie for verification
   const rawState = randomBytes(32).toString('hex');
   
-  // Store in DB
+  // Derive sessionId from rawState for probe result binding
+  const sessionId = createHmac('sha256', config.sessionSecret)
+    .update(rawState)
+    .digest('hex');
+  
+  // Store in DB - uses sessionHash derived from rawState (not rawState itself)
+  const sessionHash = createHmac('sha256', config.sessionSecret)
+    .update(rawState)
+    .digest('hex');
+  
   const expiresAt = new Date(Date.now() + STATE_COOKIE_TTL_SECONDS * 1000);
   await repository.createState({
-    stateValue: rawState,
-    sessionHash: createHmac('sha256', config.sessionSecret)
-      .update(sessionId)
-      .digest('hex'),
+    sessionHash,
     expiresAt,
   });
 
-  // Set cookies in response
+  // Create cookies
+  const stateCookieValue = createStateCookieValue(rawState, config.stateSecret);
+  const sessionCookieValue = createSessionCookieValue(sessionId, config.sessionSecret);
+  
+  // Generate the TikTok authorization URL
+  const clientKey = config.clientKey;
+  const redirectUri = config.redirectUri;
+  
+  const authUrl = new URL('https://www.tiktok.com/v2/auth/authorize/');
+  authUrl.searchParams.set('client_key', clientKey);
+  authUrl.searchParams.set('redirect_uri', redirectUri);
+  authUrl.searchParams.set('response_type', 'code');
+  authUrl.searchParams.set('scope', 'user.info.basic,user.info.stats,video.list');
+  authUrl.searchParams.set('state', rawState);
+
+  // Create response with cookies set
   const response = new NextResponse(null);
   response.cookies.set(STATE_COOKIE_NAME, stateCookieValue, {
     httpOnly: true,
@@ -211,7 +254,7 @@ export async function createOAuthState(request: NextRequest): Promise<{
     path: '/',
   });
 
-  return { state: rawState, sessionId };
+  return { authUrl: authUrl.toString(), response };
 }
 
 /**
@@ -221,7 +264,7 @@ export async function consumeOAuthState(rawState: string, sessionHash: string): 
   success: boolean;
   error?: string;
 }> {
-  const repository = getRepository();
+  const repository = getOAuthRepository();
   const result = await repository.consumeState(rawState, sessionHash);
   return { success: result.success, error: result.error };
 }
@@ -230,12 +273,13 @@ export async function consumeOAuthState(rawState: string, sessionHash: string): 
  * Store probe result in DB and return result ID.
  */
 export async function storeProbeResult(
+  rawState: string,
   sessionHash: string,
   data: Record<string, any>,
   scopes: string,
   bothSucceeded: boolean
 ): Promise<string> {
-  const repository = getRepository();
+  const repository = getOAuthRepository();
   const resultId = randomBytes(16).toString('hex');
   const expiresAt = new Date(Date.now() + PROBE_COOKIE_TTL_SECONDS * 1000);
   
@@ -255,7 +299,7 @@ export async function storeProbeResult(
  * Consume probe result from DB.
  */
 export async function consumeProbeResult(
-  resultId: string,
+  rawState: string,
   sessionHash: string
 ): Promise<{
   success: boolean;
@@ -264,8 +308,8 @@ export async function consumeProbeResult(
   scopes?: string;
   bothSucceeded?: boolean;
 }> {
-  const repository = getRepository();
-  const result = await repository.consumeProbeResult(resultId, sessionHash);
+  const repository = getOAuthRepository();
+  const result = await repository.consumeProbeResult(rawState, sessionHash);
   
   if (!result.success) {
     return { success: false, error: result.error };
@@ -346,19 +390,29 @@ export async function revokeToken(accessToken: string): Promise<boolean> {
 // Sanitization
 // ============================================================================
 
+// Classification:
+// - PII identifiers (open_id, union_id, etc.): ALWAYS redacted
+// - Display names (display_name, username, nickname): ALWAYS redacted  
+// - Generic name fields: redacted conservatively
+// - Video titles: redacted unless a verification fixture explicitly needs content
+//   (Current implementation: ALWAYS redacted for consistency)
+// - URLs (avatar_url, cover_image_url): ALWAYS redacted (not stored)
+// - Logs/tokens/emails/phones: ALWAYS redacted
+
 const SENSITIVE_FIELDS = new Set([
   'open_id', 'union_id', 'display_name', 'avatar_url', 'cover_image_url',
   'username', 'nickname', 'log_id', 'email', 'phone',
-  'access_token', 'refresh_token',
+  'access_token', 'refresh_token', 'name', 'title',
 ]);
 
 export function sanitizeDisplayData(data: any): any {
   if (data === null || data === undefined) return data;
   if (typeof data === 'string') {
-    if (data.startsWith('http://') || data.startsWith('https://')) return '<URL>';
-    if (data.length > 20 && /^[a-zA-Z0-9_-]+$/.test(data)) return '<ID>';
-    if (data.includes('@') && data.includes('.')) return '<EMAIL>';
-    return data;
+    // Redact ALL strings that could be sensitive
+    if (data.startsWith('http://') || data.startsWith('https://')) return '<REDACTED>';
+    if (data.length > 20 && /^[a-zA-Z0-9_-]+$/.test(data)) return '<REDACTED>';
+    if (data.includes('@') && data.includes('.')) return '<REDACTED>';
+    return '<REDACTED>';
   }
   if (typeof data === 'number') return data;
   if (typeof data === 'boolean') return data;
