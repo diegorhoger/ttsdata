@@ -5,7 +5,7 @@
  * All DB operations go through OAuthRepository.
  */
 
-import { OAuthRepository, type OAuthConfig } from '../../../../packages/db/src/repositories/oauth';
+import { OAuthRepository, type OAuthConfig } from '@ttsdata/db';
 import { createHmac, randomBytes } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 
