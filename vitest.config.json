@@ -1,10 +1,5 @@
 {
-  "test": {
-    "include": [
-      "tests/**/*.test.ts"
-    ],
-    "environment": "node",
-    "globals": true,
-    "cacheDir": "/workspace/.vitest-cache"
-  }
+  "include": ["tests/**/*.test.ts", "apps/web/src/app/api/auth/tiktok/__tests__/**/*.test.ts"],
+  "globals": true,
+  "environment": "node"
 }
