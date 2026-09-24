@@ -10,33 +10,18 @@ import { useState, useEffect } from "react";
  * No data is collected until the user explicitly authorizes.
  */
 export default function TikTokConnectPage() {
-  const clientId = process.env.NEXT_PUBLIC_TIKTOK_CLIENT_KEY;
-  const redirectUri = process.env.NEXT_PUBLIC_TIKTOK_REDIRECT_URI || "http://localhost:3000/api/auth/tiktok/callback";
-  
-  // Generate a random state parameter for CSRF protection
-  const state = Math.random().toString(36).substring(7);
-  
-  // Display API scopes - minimal required
-  const scopes = ["user.info.basic", "video.list"];
+  // Scopes are now requested by the server endpoint
 
-  const handleConnect = () => {
-    if (!clientId) {
-      alert("TikTok Client Key não configurada. Verifique as variáveis de ambiente.");
-      return;
+  const handleConnect = async () => {
+    // Call server endpoint to start OAuth (sets signed state cookie)
+    const response = await fetch('/api/auth/tiktok/start');
+    if (response.redirected) {
+      window.location.href = response.url;
+    } else {
+      const data = await response.json();
+      console.error('Failed to start OAuth:', data);
+      alert('Erro ao iniciar conexão. Tente novamente.');
     }
-
-    // Store state in sessionStorage for verification on callback
-    sessionStorage.setItem("tiktok_oauth_state", state);
-
-    // Build TikTok authorization URL
-    const authUrl = new URL("https://www.tiktok.com/v2/auth/authorize/");
-    authUrl.searchParams.set("client_key", clientId);
-    authUrl.searchParams.set("redirect_uri", redirectUri);
-    authUrl.searchParams.set("response_type", "code");
-    authUrl.searchParams.set("scope", scopes.join(","));
-    authUrl.searchParams.set("state", state);
-
-    window.location.href = authUrl.toString();
   };
 
   // Check for success/error from OAuth callback
@@ -56,7 +41,6 @@ export default function TikTokConnectPage() {
 
     if (success) {
       setOauthResult({ type: 'success', message: `Autorização concluída! Escopos: ${scope || 'N/A'}` });
-      localStorage.setItem('tiktok_connected', 'true');
       setIsConnected(true);
     } else if (error) {
       setOauthResult({ type: 'error', message: `Erro: ${error}${description ? ' - ' + description : ''}` });
