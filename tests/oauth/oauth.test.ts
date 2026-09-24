@@ -8,7 +8,9 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import {
+import * as oauthModule from '../../apps/web/src/lib/oauth';
+
+const {
   createOAuthState,
   consumeOAuthState,
   storeProbeResult,
@@ -16,30 +18,66 @@ import {
   sanitizeDisplayData,
   validateEnvironment,
   createSessionIdentity,
+  createOAuthStateWithCookies,
   revokeToken,
-} from '../../apps/web/src/lib/oauth';
+} = oauthModule;
 
 // Tests run in isolation — in production, these would use test database
 // For verification, we test the module's contract behavior
 
 describe('OAuth Environment Validation', () => {
-  it('should throw when required env vars are missing', () => {
-    const original = process.env.TIKTOK_CLIENT_SECRET;
-    process.env.TIKTOK_CLIENT_SECRET = undefined as any;
+  const originalEnv = {
+    TIKTOK_CLIENT_KEY: process.env.TIKTOK_CLIENT_KEY,
+    TIKTOK_CLIENT_SECRET: process.env.TIKTOK_CLIENT_SECRET,
+    NEXT_PUBLIC_TIKTOK_REDIRECT_URI: process.env.NEXT_PUBLIC_TIKTOK_REDIRECT_URI,
+    OAUTH_STATE_SECRET: process.env.OAUTH_STATE_SECRET,
+    OAUTH_SESSION_SECRET: process.env.OAUTH_SESSION_SECRET,
+  };
+
+  afterEach(() => {
+    // Restore env vars after each test
+    for (const [key, value] of Object.entries(originalEnv)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  });
+
+  it('should throw when TIKTOK_CLIENT_KEY is missing', () => {
+    delete process.env.TIKTOK_CLIENT_KEY;
+    
+    try {
+      validateEnvironment();
+      expect.fail('Should have thrown');
+    } catch (err: any) {
+      expect(err.message).toContain('TIKTOK_CLIENT_KEY');
+    }
+  });
+
+  it('should throw when TIKTOK_CLIENT_SECRET is missing', () => {
+    process.env.TIKTOK_CLIENT_KEY = 'test-key';
+    delete process.env.TIKTOK_CLIENT_SECRET;
     
     try {
       validateEnvironment();
       expect.fail('Should have thrown');
     } catch (err: any) {
       expect(err.message).toContain('TIKTOK_CLIENT_SECRET');
-    } finally {
-      process.env.TIKTOK_CLIENT_SECRET = original;
     }
   });
 });
 
 describe('Session Identity', () => {
   it('should create session identity with random ID', () => {
+    // Set env vars for getConfig
+    process.env.TIKTOK_CLIENT_KEY = 'test-key';
+    process.env.TIKTOK_CLIENT_SECRET = 'test-secret';
+    process.env.NEXT_PUBLIC_TIKTOK_REDIRECT_URI = 'http://localhost:3000/callback';
+    process.env.OAUTH_STATE_SECRET = 'test-state-secret';
+    process.env.OAUTH_SESSION_SECRET = 'test-session-secret';
+    
     const mockRequest = {
       cookies: {
         get: (name: string) => null,
