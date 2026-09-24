@@ -88,6 +88,13 @@ export async function GET(request: NextRequest) {
   }
 
   // Get session from session cookie
+  if (!sessionCookie) {
+    console.error('OAuth callback: missing session cookie');
+    const response = NextResponse.redirect(new URL('/connect?error=missing_session_cookie', CANONICAL_URL));
+    clearCookie(response);
+    return response;
+  }
+
   const sessionVerification = verifySessionCookie(sessionCookie);
   if (!sessionVerification) {
     console.error('OAuth callback: invalid session cookie');
@@ -153,9 +160,9 @@ export async function GET(request: NextRequest) {
 
     // Parse scopes into exact set and validate ALL required scopes
     const rawScopes = tokenData.scope || '';
-    const scopeSet = new Set(rawScopes.split(',').map(s => s.trim()).filter(Boolean));
+    const scopeSet = new Set(rawScopes.split(',').map((s: string) => s.trim()).filter(Boolean));
 
-    for (const required: string of REQUIRED_SCOPES) {
+    for (const required of REQUIRED_SCOPES) {
       if (!scopeSet.has(required)) {
         console.error('Token exchange: missing required scope', required);
         return NextResponse.redirect(

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createOAuthStateWithCookies, validateEnvironment } from '../../../../../lib/oauth';
 
+export const dynamic = 'force-dynamic';
+
 const CANONICAL_URL = 'https://ttsdata.netlify.app';
 
 export async function GET(request: NextRequest) {
@@ -25,14 +27,14 @@ export async function GET(request: NextRequest) {
   // Copy cookies from the internal response to the redirect response
   // Access the cookies map and copy each one
   // Copy cookies from the internal response to the redirect response
-  // ResponseCookies is iterable via for...of in Next.js 14
-  for (const [name, options] of response.cookies.entries()) {
-    redirectResponse.cookies.set(name, options.value || '', {
-      httpOnly: options.httpOnly ?? true,
-      secure: options.secure ?? process.env.NODE_ENV === 'production',
-      sameSite: options.sameSite ?? 'lax',
-      maxAge: options.maxAge ?? 600,
-      path: options.path ?? '/',
+  const cookies = response.cookies.getAll();
+  for (const cookie of cookies) {
+    redirectResponse.cookies.set(cookie.name, cookie.value, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 600,
+      path: '/',
     });
   }
 

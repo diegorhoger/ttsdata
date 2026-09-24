@@ -131,7 +131,7 @@ export class OAuthRepository {
         success: true,
         stateRecord: {
           id: result.rows[0].id,
-          sessionHash: params.sessionHash,
+          sessionHash: sessionHash,
           consumedAt: new Date(),
         },
       };

@@ -330,7 +330,6 @@ export const oauthStates = pgTable('oauth_states', {
   id: uuid('id').primaryKey().defaultRandom(),
   stateHash: varchar('state_hash', { length: 64 }).notNull(),
   sessionHash: varchar('session_hash', { length: 64 }).notNull(),
-  stateValue: varchar('state_value', { length: 128 }).notNull(),
   issuedAt: timestamp('issued_at', { withTimezone: true }).notNull().defaultNow(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   consumedAt: timestamp('consumed_at', { withTimezone: true }),

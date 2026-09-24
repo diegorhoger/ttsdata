@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   consumeProbeResult,
   verifyProbeResultCookie,
-} from '../../lib/oauth';
+} from '../../../lib/oauth';
 import { createHmac } from 'node:crypto';
 
 export async function GET(request: NextRequest) {
@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
   if (probeCookie) {
     const verified = verifyProbeResultCookie(probeCookie);
     if (verified) {
-      resultId = verified.resultId;
+      resultId = verified.rawState;
       sessionId = verified.sessionId;
     }
   }
