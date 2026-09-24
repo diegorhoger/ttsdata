@@ -1,5 +1,7 @@
 "use client";
 
+import { useState, useEffect } from "react";
+
 
 /**
  * TikTok Connect Page - Verification Only
