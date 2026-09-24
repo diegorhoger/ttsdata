@@ -9,6 +9,7 @@ import {
   sanitizeDisplayData,
   verifyStateCookie,
   verifySessionCookie,
+  createProbeResultCookie,
   validateEnvironment,
 } from '../../../../../lib/oauth';
 
@@ -154,7 +155,7 @@ export async function GET(request: NextRequest) {
     const rawScopes = tokenData.scope || '';
     const scopeSet = new Set(rawScopes.split(',').map(s => s.trim()).filter(Boolean));
 
-    for (const required of REQUIRED_SCOPES) {
+    for (const required: string of REQUIRED_SCOPES) {
       if (!scopeSet.has(required)) {
         console.error('Token exchange: missing required scope', required);
         return NextResponse.redirect(
