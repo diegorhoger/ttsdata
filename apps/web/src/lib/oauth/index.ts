@@ -2,7 +2,7 @@
  * OAuth Module — Server-side OAuth flow helpers for TikTok Display API
  * 
  * Provides helper functions for OAuth routes.
- * The OAuthRepository handles all DB operations.
+ * All DB operations go through OAuthRepository.
  */
 
 import { OAuthRepository, type OAuthConfig } from '../../../../packages/db/src/repositories/oauth';
@@ -32,10 +32,17 @@ function getConfig(): OAuthConfig {
   return { clientKey, clientSecret, redirectUri, stateSecret, sessionSecret };
 }
 
+const REPOSITORY_INSTANCE = new WeakMap<object, OAuthRepository>();
+
 function getRepository(): OAuthRepository {
-  // Single repository instance per process — DB handles cross-instance durability
+  // Use a global singleton keyed by DB URL - one repo per DB connection
   const databaseUrl = process.env.DATABASE_URL || 'postgresql://localhost:5432/ttsdata';
-  return new OAuthRepository(databaseUrl, getConfig());
+  let repo = REPOSITORY_INSTANCE.get(databaseUrl);
+  if (!repo) {
+    repo = new OAuthRepository(databaseUrl, getConfig());
+    REPOSITORY_INSTANCE.set(databaseUrl, repo);
+  }
+  return repo;
 }
 
 /**
@@ -48,7 +55,7 @@ export function createSessionCookies(): {
   sessionCookieValue: string;
 } {
   const config = getConfig();
-  const sessionId = crypto.randomUUID();
+  const sessionId = randomBytes(32).toString('hex');
   const sessionHash = createHmac('sha256', config.sessionSecret)
     .update(sessionId)
     .digest('hex');
@@ -148,7 +155,7 @@ export function verifyProbeResultCookie(cookieValue: string): { resultId: string
   if (parts.length !== 3) return null;
   
   const [resultId, sessionId, hmac] = parts;
-  const issuedAt = Date.now(); // Cookie doesn't carry timestamp — TTL enforced by DB
+  const issuedAt = Date.now();
   
   const expectedHmac = createHmac('sha256', config.sessionSecret)
     .update(`${resultId}.${sessionId}.${issuedAt}`)
