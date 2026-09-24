@@ -5,8 +5,8 @@
  * The OAuthRepository handles all DB operations.
  */
 
-import { OAuthRepository, type OAuthConfig } from '@ttsdata/db/src/repositories/oauth';
-import { createHmac } from 'crypto';
+import { OAuthRepository, type OAuthConfig } from '../../../../packages/db/src/repositories/oauth';
+import { createHmac, randomBytes } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 
 const STATE_COOKIE_NAME = 'ttsdata_oauth_state';

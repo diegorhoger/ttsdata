@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createHmac } from 'crypto';
 import {
   consumeOAuthState,
   storeProbeResult,
@@ -9,7 +10,7 @@ import {
   createProbeResultCookie,
   verifyProbeResultCookie,
   validateEnvironment,
-} from '../../../lib/oauth';
+} from '../../../../../../lib/oauth';
 
 const CANONICAL_URL = 'https://ttsdata.netlify.app';
 const STATE_COOKIE_NAME = 'ttsdata_oauth_state';

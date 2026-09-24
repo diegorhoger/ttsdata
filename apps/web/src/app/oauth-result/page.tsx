@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   consumeProbeResult,
   verifyProbeResultCookie,
-} from '../../lib/oauth';
+} from '../../../../../lib/oauth';
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
