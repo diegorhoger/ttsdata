@@ -45,6 +45,7 @@ export interface ConsumeProbeResultResult {
 }
 
 export class OAuthRepository {
+  private externalPool?: import('pg').Pool;
   private pool: Pool;
   private config: OAuthConfig;
 
@@ -131,10 +132,11 @@ export class OAuthRepository {
   async createProbeResult(input: CreateProbeResultInput): Promise<string> {
     const resultIdHash = this.hashResult(input.resultId);
     const sessionHash = this.hashSession(input.sessionId);
-    await this.pool.query(
+    const result = await this.pool.query(
       `INSERT INTO oauth_probe_results (result_id_hash, session_hash, data, scopes, both_succeeded, expires_at)
        VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT (result_id_hash) DO NOTHING`,
+       ON CONFLICT (result_id_hash) DO NOTHING
+       RETURNING id`,
       [
         resultIdHash,
         sessionHash,
@@ -144,6 +146,9 @@ export class OAuthRepository {
         input.expiresAt,
       ]
     );
+    if (result.rowCount !== 1) {
+      throw new Error('Probe result insertion conflict or failure: expected exactly 1 row');
+    }
     return input.resultId;
   }
 
@@ -203,6 +208,9 @@ export class OAuthRepository {
   }
 
   async close(): Promise<void> {
-    await this.pool.end();
+    if (!this.externalPool) {
+      await this.pool.end();
+    }
+    // Shared pool: do NOT terminate
   }
 }
