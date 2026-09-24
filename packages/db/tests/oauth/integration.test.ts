@@ -30,6 +30,12 @@ describe('OAuth Concurrent Consumption (PostgreSQL)', () => {
     });
   });
 
+  afterEach(async () => {
+    // Clean up test data after each test
+    await pool.query('DELETE FROM oauth_states WHERE state_hash LIKE \'test-%\'');
+    await pool.query('DELETE FROM oauth_probe_results WHERE result_id_hash LIKE \'test-%\'');
+  });
+
   afterAll(async () => {
     await pool.end();
   });

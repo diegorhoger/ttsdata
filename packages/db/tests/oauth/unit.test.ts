@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import * as oauthModule from '../../apps/web/src/lib/oauth';
+import * as oauthModule from '../../../../apps/web/src/lib/oauth';
 
 const {
   createOAuthState,
