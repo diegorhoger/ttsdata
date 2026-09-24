@@ -1,81 +1,59 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { randomBytes, createHash, timingSafeEqual } from 'crypto';
+import { createHmac } from 'crypto';
+import { verifyStateCookie } from '../start/route';
 
-// Canonical URL for all OAuth redirects (never branch deployment hostname)
 const CANONICAL_URL = 'https://ttsdata.netlify.app';
-
-// In-memory state store (use Redis in production)
-const stateStore = new Map<string, { createdAt: number; userId: string }>();
-const STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const PROBE_COOKIE_NAME = 'ttsdata_probe_result';
+const PROBE_TTL_SECONDS = 300; // 5 minutes
 
 /**
- * TikTok OAuth Callback - Verification Only
+ * GET /api/auth/tiktok/callback
  * 
- * This route handles the OAuth redirect from TikTok after user authorization.
- * It exchanges the authorization code for an access token and validates the response.
- * 
- * NO data ingestion, NO analytics, NO storage of user data.
- * This is purely a verification step to confirm the OAuth flow works correctly.
+ * TikTok OAuth callback with proper state validation, Display API probes,
+ * and token revocation. Verification-only — no data persistence.
  */
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
   const code = searchParams.get('code');
   const state = searchParams.get('state');
   const error = searchParams.get('error');
-  const errorDescription = searchParams.get('error_description');
 
   // Handle OAuth errors from TikTok
   if (error) {
-    // Sanitize: don't leak upstream error details into URL
     console.error(`TikTok OAuth error: ${error}`);
-    return NextResponse.redirect(
-      new URL('/connect?error=oauth_failed', CANONICAL_URL)
-    );
+    return NextResponse.redirect(new URL('/connect?error=oauth_failed', CANONICAL_URL));
   }
 
-  // Validate required parameters
+  // Validate state from signed cookie
+  const stateCookie = request.cookies.get('ttsdata_oauth_state')?.value;
+  const verifiedState = stateCookie ? verifyStateCookie(stateCookie) : null;
+
+  if (!verifiedState) {
+    console.error('OAuth callback: invalid or missing state cookie');
+    return NextResponse.redirect(new URL('/connect?error=invalid_state', CANONICAL_URL));
+  }
+
+  // Verify state matches exactly
+  if (state !== verifiedState.state) {
+    console.error('OAuth callback: state mismatch');
+    return NextResponse.redirect(new URL('/connect?error=state_mismatch', CANONICAL_URL));
+  }
+
+  // Validate code
   if (!code) {
-    return NextResponse.redirect(
-      new URL('/connect?error=missing_code', CANONICAL_URL)
-    );
+    return NextResponse.redirect(new URL('/connect?error=missing_code', CANONICAL_URL));
   }
 
-  // Validate state parameter (fail closed)
-  if (!state) {
-    console.error('OAuth callback: missing state parameter');
-    return NextResponse.redirect(
-      new URL('/connect?error=invalid_state', CANONICAL_URL)
-    );
-  }
-
-  // Verify state exists and is valid (single-use, not expired)
-  const stateData = stateStore.get(state);
-  if (!stateData) {
-    console.error('OAuth callback: state not found or expired');
-    return NextResponse.redirect(
-      new URL('/connect?error=invalid_state', CANONICAL_URL)
-    );
-  }
-
-  // Check state expiration
-  if (Date.now() - stateData.createdAt > STATE_TTL_MS) {
-    stateStore.delete(state);
-    console.error('OAuth callback: state expired');
-    return NextResponse.redirect(
-      new URL('/connect?error=state_expired', CANONICAL_URL)
-    );
-  }
-
-  // Remove state (single-use)
-  stateStore.delete(state);
+  // Clear state cookie (single-use)
+  const clearCookie = (response: NextResponse) => {
+    response.cookies.set('ttsdata_oauth_state', '', { maxAge: 0, path: '/' });
+  };
 
   try {
     // Exchange authorization code for access token
     const tokenResponse = await fetch('https://open.tiktokapis.com/v2/oauth/token/', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         client_key: process.env.NEXT_PUBLIC_TIKTOK_CLIENT_KEY || '',
         client_secret: process.env.TIKTOK_CLIENT_SECRET || '',
@@ -88,34 +66,36 @@ export async function GET(request: NextRequest) {
     const tokenData = await tokenResponse.json() as any;
 
     if (!tokenResponse.ok) {
-      // Sanitize: don't leak upstream response into URL
-      console.error('Token exchange failed:', tokenData);
-      return NextResponse.redirect(
-        new URL('/connect?error=token_exchange_failed', CANONICAL_URL)
-      );
+      console.error('Token exchange failed');
+      const response = NextResponse.redirect(new URL('/connect?error=token_exchange_failed', CANONICAL_URL));
+      clearCookie(response);
+      return response;
     }
 
-    // VERIFICATION ONLY: Log that the flow works, do NOT store the token
-    console.log('TikTok OAuth flow verified successfully');
-    console.log('Token type:', tokenData.token_type);
-    console.log('Scope:', tokenData.scope);
-    console.log('Expires in:', tokenData.expires_in, 'seconds');
-
-    // Call Display API endpoints for verification (server-side, no storage)
     const accessToken = tokenData.access_token;
-    const displayResults: any = {};
+    const scopes = tokenData.scope || '';
+
+    // Call Display API endpoints — preserve exact envelopes
+    const probeResults: any = {
+      userInfo: null,
+      videoList: null,
+      errors: [],
+    };
 
     // Fetch user info
     try {
       const userInfoRes = await fetch(
         'https://open.tiktokapis.com/v2/user/info/?fields=open_id,display_name,avatar_url,follower_count,video_count',
-        {
-          headers: { 'Authorization': `Bearer ${accessToken}` },
-        }
+        { headers: { Authorization: `Bearer ${accessToken}` } }
       );
-      displayResults.userInfo = await userInfoRes.json();
+      const userInfoData = await userInfoRes.json();
+      if (userInfoRes.ok) {
+        probeResults.userInfo = userInfoData;
+      } else {
+        probeResults.errors.push({ endpoint: 'user.info', status: userInfoRes.status, body: userInfoData });
+      }
     } catch (err) {
-      console.error('Failed to fetch user info:', err);
+      probeResults.errors.push({ endpoint: 'user.info', error: String(err) });
     }
 
     // Fetch video list
@@ -131,82 +111,126 @@ export async function GET(request: NextRequest) {
           body: JSON.stringify({ max_count: 20 }),
         }
       );
-      displayResults.videoList = await videoListRes.json();
+      const videoListData = await videoListRes.json();
+      if (videoListRes.ok) {
+        probeResults.videoList = videoListData;
+      } else {
+        probeResults.errors.push({ endpoint: 'video.list', status: videoListRes.status, body: videoListData });
+      }
     } catch (err) {
-      console.error('Failed to fetch video list:', err);
+      probeResults.errors.push({ endpoint: 'video.list', error: String(err) });
     }
 
-    // Sanitize the results for display
-    const sanitized = sanitizeDisplayData(displayResults);
+    // Check if both probes succeeded
+    const bothSucceeded = probeResults.userInfo && probeResults.videoList && probeResults.errors.length === 0;
 
-    // Redirect to connect page with sanitized probe results
-    // Store results temporarily (in-memory only, 5 min TTL)
-    const probeId = randomBytes(16).toString('hex');
-    probeStore.set(probeId, { data: sanitized, createdAt: Date.now() });
+    // Sanitize for display — preserve structure, redact sensitive values
+    const sanitized = sanitizeDisplayData(probeResults);
 
-    return NextResponse.redirect(
-      new URL(`/connect?success=true&scope=${encodeURIComponent(tokenData.scope || '')}&probe_id=${probeId}`, CANONICAL_URL)
-    );
+    // Revoke temporary token (best effort, don't fail if it errors)
+    try {
+      await fetch('https://open.tiktokapis.com/v2/oauth/revoke/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_key: process.env.NEXT_PUBLIC_TIKTOK_CLIENT_KEY || '',
+          client_secret: process.env.TIKTOK_CLIENT_SECRET || '',
+          token: accessToken,
+        }),
+      });
+      console.log('Temporary token revoked after verification');
+    } catch (err) {
+      console.error('Failed to revoke token:', err);
+    }
+
+    // Store sanitized result in signed cookie
+    const resultCookie = createSignedProbeCookie(sanitized, Date.now());
+
+    const successUrl = new URL('/oauth-result', CANONICAL_URL);
+    if (bothSucceeded) {
+      successUrl.searchParams.set('status', 'success');
+      successUrl.searchParams.set('scopes', scopes);
+    } else {
+      successUrl.searchParams.set('status', 'partial');
+      successUrl.searchParams.set('scopes', scopes);
+    }
+
+    const response = NextResponse.redirect(successUrl);
+    clearCookie(response);
+    response.cookies.set(PROBE_COOKIE_NAME, resultCookie, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: PROBE_TTL_SECONDS,
+      path: '/',
+    });
+
+    return response;
 
   } catch (err) {
     console.error('OAuth callback error:', err);
-    return NextResponse.redirect(
-      new URL('/connect?error=internal_error', CANONICAL_URL)
-    );
+    const response = NextResponse.redirect(new URL('/connect?error=internal_error', CANONICAL_URL));
+    clearCookie(response);
+    return response;
   }
 }
 
-// In-memory probe store (use Redis in production)
-const probeStore = new Map<string, { data: any; createdAt: number }>();
-const PROBE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
 /**
- * Sanitize display data for verification-only presentation.
- * Removes PII and sensitive identifiers.
+ * Recursively sanitize display data.
+ * Preserves exact structure, replaces sensitive values with placeholders.
  */
-function sanitizeDisplayData(data: any) {
-  const sanitized: any = {};
-
-  if (data.userInfo?.data) {
-    const user = data.userInfo.data;
-    sanitized.userInfo = {
-      open_id: '<USER_ID>',
-      display_name: user.display_name ? '<DISPLAY_NAME>' : null,
-      avatar_url: user.avatar_url ? '<URL>' : null,
-      follower_count: user.follower_count,
-      video_count: user.video_count,
-    };
+function sanitizeDisplayData(data: any): any {
+  if (data === null || data === undefined) return data;
+  if (typeof data === 'string') {
+    if (data.startsWith('http')) return '<URL>';
+    if (data.length > 20 && /^[a-zA-Z0-9_-]+$/.test(data)) return '<ID>';
+    return data;
   }
-
-  if (data.videoList?.data) {
-    const videos = data.videoList.data;
-    sanitized.videoList = {
-      videos: (videos || []).map((v: any) => ({
-        id: '<VIDEO_ID>',
-        title: v.title ? '<VIDEO_TITLE>' : null,
-        create_time: v.create_time,
-        cover_image_url: v.cover_image_url ? '<URL>' : null,
-        view_count: v.view_count,
-        like_count: v.like_count,
-        comment_count: v.comment_count,
-        share_count: v.share_count,
-      })),
-      pagination: data.videoList.pagination || null,
-    };
+  if (typeof data === 'number') return data;
+  if (typeof data === 'boolean') return data;
+  if (Array.isArray(data)) return data.map(sanitizeDisplayData);
+  if (typeof data === 'object') {
+    const result: any = {};
+    for (const [key, value] of Object.entries(data)) {
+      if (['open_id', 'union_id', 'display_name', 'avatar_url', 'cover_image_url'].includes(key)) {
+        result[key] = '<REDACTED>';
+      } else {
+        result[key] = sanitizeDisplayData(value);
+      }
+    }
+    return result;
   }
-
-  return sanitized;
+  return data;
 }
 
 /**
- * Generate a cryptographically secure state value.
- * Called by the connect page before redirecting to TikTok.
+ * Create signed probe result cookie.
  */
-export function generateOAuthState(userId: string): string {
-  const state = randomBytes(32).toString('hex');
-  stateStore.set(state, {
-    createdAt: Date.now(),
-    userId,
-  });
-  return state;
+function createSignedProbeCookie(data: any, timestamp: number): string {
+  const secret = process.env.OAUTH_STATE_SECRET || 'development-secret-change-in-production';
+  const payload = JSON.stringify({ data, timestamp });
+  const hmac = createHmac('sha256', secret).update(payload).digest('hex');
+  return Buffer.from(`${payload}.${hmac}`).toString('base64url');
+}
+
+/**
+ * Verify and decode probe result cookie.
+ */
+export function verifyProbeCookie(cookieValue: string): any | null {
+  if (!cookieValue) return null;
+  try {
+    const decoded = Buffer.from(cookieValue, 'base64url').toString();
+    const lastDot = decoded.lastIndexOf('.');
+    if (lastDot === -1) return null;
+    const payload = decoded.slice(0, lastDot);
+    const hmac = decoded.slice(lastDot + 1);
+    const secret = process.env.OAUTH_STATE_SECRET || 'development-secret-change-in-production';
+    const expectedHmac = createHmac('sha256', secret).update(payload).digest('hex');
+    if (hmac !== expectedHmac) return null;
+    const parsed = JSON.parse(payload);
+    if (Date.now() - parsed.timestamp > PROBE_TTL_SECONDS * 1000) return null;
+    return parsed.data;
+  } catch {
+    return null;
+  }
 }
