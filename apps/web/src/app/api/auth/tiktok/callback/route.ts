@@ -116,22 +116,21 @@ export async function GET(request: NextRequest) {
   const config = getConfig();
   const sessionId = sessionVerification.sessionId;
 
-  // Consume state from DB (session-bound in SQL)
-  const stateResult = await consumeOAuthState(stateVerification.rawState, sessionId);
-  if (!stateResult.success) {
-    console.error('OAuth callback: state consumption failed', stateResult.error);
-    const response = NextResponse.redirect(
-      new URL(`/connect?error=${stateResult.error}`, CANONICAL_URL)
-    );
-    clearCookie(response);
-    response.cookies.set(PROBE_COOKIE_NAME, '', { maxAge: 0, path: '/' });
-    return response;
-  }
-
   let accessToken: string | null = null;
   let tokenData: any = null;
 
   try {
+    // Consume state from DB (session-bound in SQL) - inside try for protection
+    const stateResult = await consumeOAuthState(stateVerification.rawState, sessionId);
+    if (!stateResult.success) {
+      console.error('OAuth callback: state consumption failed', stateResult.error);
+      const response = NextResponse.redirect(
+        new URL(`/connect?error=${stateResult.error}`, CANONICAL_URL)
+      );
+      clearCookie(response);
+      response.cookies.set(PROBE_COOKIE_NAME, '', { maxAge: 0, path: '/' });
+      return response;
+    }
     const clientKey = process.env.TIKTOK_CLIENT_KEY || '';
     const clientSecret = process.env.TIKTOK_CLIENT_SECRET || '';
     const redirectUri = process.env.NEXT_PUBLIC_TIKTOK_REDIRECT_URI || '';

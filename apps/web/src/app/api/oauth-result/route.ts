@@ -29,17 +29,21 @@ export async function GET(request: NextRequest) {
 
   // Session must come from verified cookie for security; URL param alone is not authorization
   if (!sessionId) {
-    return NextResponse.json(
+    const response = NextResponse.json(
       { error: 'Session not verified. A valid probe cookie is required.' },
       { status: 403 }
     );
+    response.cookies.set('ttsdata_probe_result', '', { maxAge: 0, path: '/' });
+    return response;
   }
 
   if (!resultId) {
-    return NextResponse.json(
+    const response = NextResponse.json(
       { error: 'Missing result identifier' },
       { status: 400 }
     );
+    response.cookies.set('ttsdata_probe_result', '', { maxAge: 0, path: '/' });
+    return response;
   }
 
   const result = await consumeProbeResult(resultId, sessionId);
