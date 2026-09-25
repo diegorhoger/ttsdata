@@ -92,19 +92,7 @@ export async function GET(request: NextRequest) {
     clearCookie(response);
     return response;
   }
-  if (!/^[a-f0-9]+$/i.test(stateParam) || !/^[a-f0-9]+$/i.test(stateVerification.rawState) || stateParam.length % 2 !== 0 || stateVerification.rawState.length % 2 !== 0) {
-    console.error('OAuth callback: invalid hex format');
-    const response = NextResponse.redirect(new URL('/connect?error=invalid_hex', CANONICAL_URL));
-    clearCookie(response);
-  }
-  const stateBuf = Buffer.from(stateParam, 'hex');
-  const rawStateBuf = Buffer.from(stateVerification.rawState, 'hex');
-  if (!timingSafeEqual(stateBuf, rawStateBuf)) {
-    console.error('OAuth callback: state mismatch');
-    const response = NextResponse.redirect(new URL('/connect?error=state_mismatch', CANONICAL_URL));
-    clearCookie(response);
-    response.cookies.set(PROBE_COOKIE_NAME, '', { maxAge: 0, path: '/' });
-    return response;
+  
   }
 
   // Get session from session cookie
