@@ -93,7 +93,6 @@ export async function GET(request: NextRequest) {
     return response;
   }
   
-  }
 
   // Get session from session cookie
   if (!sessionCookie) {
@@ -229,6 +228,11 @@ export async function GET(request: NextRequest) {
     });
 
     return response;
+  } catch (unexpected) {
+    console.error('OAuth callback: unexpected exception', unexpected);
+    const unexpectedResponse = NextResponse.redirect(new URL('/connect?error=unexpected_exception', CANONICAL_URL));
+    clearCookie(unexpectedResponse);
+    return unexpectedResponse;
   } finally {
     // ALWAYS revoke token in finally block
     // Ensure temporary cookies are cleared on any terminal path
