@@ -29,11 +29,12 @@ export async function GET(request: NextRequest) {
   // Copy cookies from the internal response to the redirect response
   const cookies = response.cookies.getAll();
   for (const cookie of cookies) {
+    const cookieMaxAge = cookie.name === 'ttsdata_session' ? 3600 : 600;
     redirectResponse.cookies.set(cookie.name, cookie.value, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: 3600,
+      maxAge: cookieMaxAge,
       path: '/',
     });
   }

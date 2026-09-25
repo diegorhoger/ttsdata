@@ -147,6 +147,7 @@ export function verifyProbeCookie(value: string): { resultId: string; sessionId:
   const [rawState, sessionId, tsStr, hmac] = parts;
   const timestampMs = parseInt(tsStr, 10);
   if (isNaN(timestampMs)) return null;
+  if (timestampMs > Date.now() + 5000) return null;  // Reject future-issued cookies
   if (Date.now() - timestampMs > PROBE_TTL_SEC * 1000) return null;  // TTL enforced
   const payload = `${rawState}.${sessionId}.${timestampMs}`;
   if (!isHexString(hmac) || hmac.length !== 64) return null;

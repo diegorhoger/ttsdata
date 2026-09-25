@@ -41,11 +41,13 @@ describe('OAuth Concurrent Consumption (PostgreSQL)', () => {
       repo.consumeState(rawState, sessionId),
       repo.consumeState(rawState, sessionId),
     ]);
-    const successes = [r1, r2].filter(r => r.success);
-    expect(successes.length).toBe(1);
-    expect(failures.length).toBe(1);
-    expect(successes.length).toBe(1);
-    expect(failures.length).toBe(1);
+    const successes = [r1, r2].filter(result => result.success);
+    const failures = [r1, r2].filter(result => !result.success);
+
+    expect(successes).toHaveLength(1);
+    expect(failures).toHaveLength(1);
+    expect(failures[0].error).toBe('already_consumed');
+    
   });
 
   it('allows exactly one concurrent consumer of a probe result record', async () => {
@@ -57,11 +59,13 @@ describe('OAuth Concurrent Consumption (PostgreSQL)', () => {
       repo.consumeProbeResult(resultId, sessionId),
       repo.consumeProbeResult(resultId, sessionId),
     ]);
-    const successes = [r1, r2].filter(r => r.success);
-    expect(successes.length).toBe(1);
-    expect(failures.length).toBe(1);
-    expect(successes.length).toBe(1);
-    expect(failures.length).toBe(1);
+    const successes = [r1, r2].filter(result => result.success);
+    const failures = [r1, r2].filter(result => !result.success);
+
+    expect(successes).toHaveLength(1);
+    expect(failures).toHaveLength(1);
+    expect(failures[0].error).toBe('already_consumed');
+    
   });
 
   it('wrong session cannot consume the valid session record', async () => {
@@ -108,7 +112,7 @@ const stateCheck = await repo['pool'].query('SELECT state_hash, session_hash FRO
     expect(resultCheck.rows[0].result_id_hash).not.toBe(resultId);
 
     // Verify raw values are not stored directly
-    const rawStateCheck = await repo['pool'].query('SELECT state_hash FROM oauth_states WHERE session_hash = $1', [createHmac('sha256', config.sessionSecret).update(sessionId).digest('hex')]);
+    const rawStateCheck = await repo['pool'].query('SELECT state_hash, session_hash FROM oauth_states WHERE session_hash = $1', [createHmac('sha256', config.sessionSecret).update(sessionId).digest('hex')]);
     if (rawStateCheck.rows.length > 0) {
       // The session hash is a 64-char hex value, not the raw session string
       expect(rawStateCheck.rows[0].session_hash).toMatch(/^[a-f0-9]{64}$/);
