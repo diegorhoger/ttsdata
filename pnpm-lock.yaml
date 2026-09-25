@@ -87,6 +87,9 @@ importers:
       next:
         specifier: 14.2.0
         version: 14.2.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      pg:
+        specifier: ^8.11.0
+        version: 8.23.0
       react:
         specifier: ^18.2.0
         version: 18.3.1
@@ -103,6 +106,9 @@ importers:
       '@types/node':
         specifier: ^20.11.0
         version: 20.19.43
+      '@types/pg':
+        specifier: ^8.11.0
+        version: 8.23.1
       '@types/react':
         specifier: ^18.2.0
         version: 18.3.31

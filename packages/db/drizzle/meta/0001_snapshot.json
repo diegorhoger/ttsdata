@@ -1,1 +1,0 @@
-{"version":"7","dialect":"postgresql","prevId":"0000_fast_invaders","id":"0001_oauth_tables","tables":[{"name":"oauth_states"},{"name":"oauth_probe_results"}],"indexes":[{"name":"oauth_states_expired_idx"},{"name":"oauth_states_state_hash_idx"},{"name":"oauth_probe_results_expired_idx"},{"name":"oauth_probe_results_result_id_hash_idx"}]}
