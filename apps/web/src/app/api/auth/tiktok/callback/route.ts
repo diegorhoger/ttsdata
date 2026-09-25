@@ -91,6 +91,12 @@ export async function GET(request: NextRequest) {
     clearCookie(response);
     return response;
   }
+  if (!/^[a-f0-9]+$/i.test(stateParam) || !/^[a-f0-9]+$/i.test(stateVerification.rawState) || stateParam.length % 2 !== 0 || stateVerification.rawState.length % 2 !== 0) {
+    console.error('OAuth callback: invalid hex format');
+    const response = NextResponse.redirect(new URL('/connect?error=invalid_hex', CANONICAL_URL));
+    clearCookie(response);
+    return response;
+  }
   const stateBuf = Buffer.from(stateParam, 'hex');
   const rawStateBuf = Buffer.from(stateVerification.rawState, 'hex');
   if (!timingSafeEqual(stateBuf, rawStateBuf)) {
@@ -160,17 +166,23 @@ export async function GET(request: NextRequest) {
 
     if (!tokenResponse.ok) {
       console.error('Token exchange failed');
-      return NextResponse.redirect(
+      const failResponse = NextResponse.redirect(
         new URL('/connect?error=token_exchange_failed', CANONICAL_URL)
       );
+      clearCookie(failResponse);
+      failResponse.cookies.set(PROBE_COOKIE_NAME, '', { maxAge: 0, path: '/' });
+      return failResponse;
     }
 
     accessToken = tokenData.access_token;
     if (!accessToken) {
       console.error('Token exchange: access_token missing');
-      return NextResponse.redirect(
+      const missingResponse = NextResponse.redirect(
         new URL('/connect?error=missing_access_token', CANONICAL_URL)
       );
+      clearCookie(missingResponse);
+      missingResponse.cookies.set(PROBE_COOKIE_NAME, '', { maxAge: 0, path: '/' });
+      return missingResponse;
     }
 
     // Parse scopes into exact set and validate ALL required scopes
@@ -180,9 +192,12 @@ export async function GET(request: NextRequest) {
     for (const required of REQUIRED_SCOPES) {
       if (!scopeSet.has(required)) {
         console.error('Token exchange: missing required scope', required);
-        return NextResponse.redirect(
+        const scopeResponse = NextResponse.redirect(
           new URL('/connect?error=insufficient_scopes', CANONICAL_URL)
         );
+        clearCookie(scopeResponse);
+        scopeResponse.cookies.set(PROBE_COOKIE_NAME, '', { maxAge: 0, path: '/' });
+        return scopeResponse;
       }
     }
 
@@ -228,6 +243,7 @@ export async function GET(request: NextRequest) {
     return response;
   } finally {
     // ALWAYS revoke token in finally block
+    // Ensure temporary cookies are cleared on any terminal path
     if (accessToken) {
       const revoked = await revokeToken(accessToken);
       if (revoked) {
