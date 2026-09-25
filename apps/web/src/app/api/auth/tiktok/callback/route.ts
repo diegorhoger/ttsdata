@@ -32,6 +32,7 @@ export async function GET(request: NextRequest) {
   const clearCookie = (response: NextResponse) => {
     response.cookies.set(STATE_COOKIE_NAME, '', { maxAge: 0, path: '/' });
     response.cookies.set('ttsdata_session', '', { maxAge: 0, path: '/' });
+    response.cookies.set(PROBE_COOKIE_NAME, '', { maxAge: 0, path: '/' });
   };
 
   // Early exits with cookie clearing
