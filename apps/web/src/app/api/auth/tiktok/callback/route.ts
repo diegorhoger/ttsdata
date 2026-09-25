@@ -95,7 +95,6 @@ export async function GET(request: NextRequest) {
     console.error('OAuth callback: invalid hex format');
     const response = NextResponse.redirect(new URL('/connect?error=invalid_hex', CANONICAL_URL));
     clearCookie(response);
-    return response;
   }
   const stateBuf = Buffer.from(stateParam, 'hex');
   const rawStateBuf = Buffer.from(stateVerification.rawState, 'hex');

@@ -112,10 +112,10 @@ const stateCheck = await repo['pool'].query('SELECT state_hash, session_hash FRO
     expect(resultCheck.rows[0].result_id_hash).not.toBe(resultId);
 
     // Verify raw values are not stored directly
-    const rawStateCheck = await repo['pool'].query('SELECT state_hash, session_hash FROM oauth_states WHERE session_hash = $1', [createHmac('sha256', config.sessionSecret).update(sessionId).digest('hex')]);
-    if (rawStateCheck.rows.length > 0) {
-      // The session hash is a 64-char hex value, not the raw session string
-      expect(rawStateCheck.rows[0].session_hash).toMatch(/^[a-f0-9]{64}$/);
-    }
+    expect(rawStateCheck.rows).toHaveLength(1);
+    expect(rawStateCheck.rows[0].state_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(rawStateCheck.rows[0].session_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(rawStateCheck.rows[0].state_hash).not.toBe(rawState);
+    expect(rawStateCheck.rows[0].session_hash).not.toBe(sessionId);
   });
 });
