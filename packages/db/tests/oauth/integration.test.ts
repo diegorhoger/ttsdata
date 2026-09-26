@@ -151,7 +151,7 @@ const stateCheck = await repo['pool'].query('SELECT state_hash, session_hash FRO
     // Repository hashes arbitrary strings, so consumption succeeds (state matches hash)
     // The invalid-hex check belongs to the callback route, not the repository layer
     const r = await repo.consumeState(invalidState, sessionId);
-    expect(r.success).toBe(false); // state_not_found: hash of invalidState won't match stored hash
+    expect(r.success).toBe(true); // repository hashes arbitrary strings
   });
 
   it('callback handler rejects invalid hex before database access', async () => {
