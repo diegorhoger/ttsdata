@@ -3,7 +3,7 @@
  * Uses real OAuthRepository with PostgreSQL.
  */
 
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { OAuthRepository, OAuthConfig } from '../../src/repositories/oauth';
 
 const config: OAuthConfig = {
@@ -142,7 +142,9 @@ describe('OAuth Concurrent Consumption (PostgreSQL)', () => {
 
   it('callback handler rejects non-hex state before database access', async () => {
     // Mock consumeOAuthState to prove it is never called for invalid hex
-    const mockConsumeOAuthState = vi.fn().mockResolvedValue({ success: true });
+    vi.mock('../../../apps/web/src/lib/oauth', () => ({
+      consumeOAuthState: vi.fn().mockResolvedValue({ success: true }),
+    }));
 
     // Import the actual callback handler and invoke it with invalid hex
     const { GET: callbackGET } = await import('../../../apps/web/src/app/api/auth/tiktok/callback/route');
@@ -187,14 +189,16 @@ describe('OAuth Concurrent Consumption (PostgreSQL)', () => {
 
   it('result handler clears probe cookie on database exception', async () => {
     // Mock consumeProbeResult to reject
-    const mockConsumeProbeResult = vi.fn().mockRejectedValue(new Error('Database connection lost'));
+    vi.mock('../../../apps/web/src/lib/oauth', () => ({
+      consumeProbeResult: vi.fn().mockRejectedValue(new Error('Database connection lost')),
+    }));
 
     // Import the actual result handler
     const { GET: resultGET } = await import('../../../apps/web/src/app/api/oauth-result/route');
     const { NextRequest } = await import('next/server');
 
     // Create request with valid signed probe cookie
-    const url = new URL('http://localhost/oauth-result?resultId=test-result-id');
+    const url = new URL('http://localhost/oauth-result?result_id=test-result-id');
     const request = new NextRequest(url, {
       headers: { cookie: 'ttsdata_probe_result=valid-probe-cookie' },
     });
