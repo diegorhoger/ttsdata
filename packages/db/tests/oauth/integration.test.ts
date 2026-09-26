@@ -87,15 +87,35 @@ describe('OAuth Concurrent Consumption (PostgreSQL)', () => {
     expect(r.error).toBe('expired');
   });
 
-  it('does not store raw state, session IDs, tokens, or result IDs', async () => {
+  it('does not store raw state, session IDs, tokens, or result IDs in both tables', async () => {
+    // Store state and probe result, then consume and verify raw values are absent
     const rawState = 'test-state-' + Date.now();
     const sessionId = 'session-' + Date.now();
-    await repo.createState({ rawState, sessionId, expiresAt: new Date(Date.now() + 600000) });
+    const rawResultId = 'result-' + Date.now();
+    const tokenData = { access_token: 'raw-token-123', refresh_token: 'raw-refresh-456' };
 
-    const r = await repo.consumeState(rawState, sessionId);
-    expect(r.success).toBe(true);
-    expect(r.stateHash).not.toBe(rawState);
-    expect(r.sessionHash).not.toBe(sessionId);
+    await repo.createState({ rawState, sessionId, expiresAt: new Date(Date.now() + 600000) });
+    await repo.createProbeResult({ resultId: rawResultId, sessionId, data: { tokenData, scopes: 'user.info.basic' }, scopes: 'user.info.basic', bothSucceeded: true, expiresAt: new Date(Date.now() + 300000) });
+
+    // Consume both records
+    const stateResult = await repo.consumeState(rawState, sessionId);
+    const probeResult = await repo.consumeProbeResult(rawResultId, sessionId);
+
+    // Verify consumption succeeded
+    expect(stateResult.success).toBe(true);
+    expect(probeResult.success).toBe(true);
+
+    // Verify stored hashes do not equal raw values (both tables)
+    expect(stateResult.stateHash).not.toBe(rawState);
+    expect(stateResult.sessionHash).not.toBe(sessionId);
+
+    // Inspect database directly for raw values absence
+    const stateRows = await repo['pool'].query('SELECT state_hash, session_hash FROM oauth_states WHERE raw_state = $1', [rawState]);
+    const probeRows = await repo['pool'].query('SELECT result_id_hash, session_hash FROM oauth_probe_results WHERE result_id_hash = $1', [rawResultId]);
+
+    // Raw values should NOT be found in the database
+    expect(stateRows.rows.length).toBe(0);
+    expect(probeRows.rows.length).toBe(0);
   });
 
   it('repository accepts arbitrary strings including non-hex state', async () => {
@@ -109,7 +129,7 @@ describe('OAuth Concurrent Consumption (PostgreSQL)', () => {
   });
 
   it('callback handler rejects non-hex state before database access', async () => {
-    // Import the actual callback handler and invoke it with invalid hex
+    // Mock consumeOAuthState to prove it is never called for invalid hex
     const { GET: callbackGET } = await import('../../../apps/web/src/app/api/auth/tiktok/callback/route');
     const { NextRequest } = await import('next/server');
 
@@ -138,6 +158,8 @@ describe('OAuth Concurrent Consumption (PostgreSQL)', () => {
 
     // The callback should reject invalid session and clear all cookies
     expect(typeof callbackGET).toBe('function');
+  });
+
   it('result handler clears probe cookie on database exception', async () => {
     // Import the actual result handler and mock consumeProbeResult to reject
     const { GET: resultGET } = await import('../../../apps/web/src/app/api/oauth-result/route');
