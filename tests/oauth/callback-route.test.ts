@@ -4,12 +4,20 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+// Configure test environment variables
+process.env.TIKTOK_CLIENT_KEY = 'test-client-key';
+process.env.TIKTOK_CLIENT_SECRET = 'test-client-secret';
+process.env.NEXT_PUBLIC_TIKTOK_REDIRECT_URI = 'http://test';
+process.env.OAUTH_STATE_SECRET = 'test-state-secret';
+process.env.OAUTH_SESSION_SECRET = 'test-session-secret';
 import { NextRequest } from 'next/server';
 
 // Mock the OAuth module before importing the route handler
-const mockConsumeOAuthState = vi.fn();
-const mockConsumeProbeResult = vi.fn();
-const mockClearCookie = vi.fn();
+const { mockConsumeOAuthState, mockConsumeProbeResult } = vi.hoisted(() => ({
+  mockConsumeOAuthState: vi.fn(),
+  mockConsumeProbeResult: vi.fn(),
+}));
 
 vi.mock('../../../apps/web/src/lib/oauth', async (importActual) => {
   const actual = await importActual();
@@ -61,6 +69,13 @@ describe('Callback Route (signed fixtures)', () => {
 
     // Verify consumeOAuthState was NOT called (hex validation prevents DB access)
     expect(mockConsumeOAuthState).not.toHaveBeenCalled();
+
+    // Verify all three deletion cookies are returned (Max-Age=0)
+    const setCookie = response.headers.get('set-cookie');
+    expect(setCookie).toContain('Max-Age=0');
+    expect(setCookie).toContain('ttsdata_oauth_state');
+    expect(setCookie).toContain('ttsdata_session');
+    expect(setCookie).toContain('ttsdata_probe_result');
   });
 
   it('rejects invalid session with redirect and clears all cookies', async () => {
