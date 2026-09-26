@@ -1,14 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import {
-  createOAuthState,
-  validateEnvironment,
-} from '../../../../../../lib/oauth';
+import { createOAuthStateWithCookies, validateEnvironment } from '../../../../../lib/oauth';
 
-/**
- * GET /api/auth/tiktok/start
- * 
- * Initiates TikTok OAuth flow.
- */
+export const dynamic = 'force-dynamic';
+
+const CANONICAL_URL = 'https://ttsdata.netlify.app';
+
 export async function GET(request: NextRequest) {
   try {
     validateEnvironment();
@@ -17,17 +13,31 @@ export async function GET(request: NextRequest) {
     throw err;
   }
 
-  const { state, sessionId } = await createOAuthState(request);
+  // createOAuthStateWithCookies generates state, stores in DB, sets cookies,
+  // and returns both the auth URL and a response with cookies set.
+  // IMPORTANT: We must return the response (which has cookies) for the redirect,
+  // not create a new redirect without cookies.
+  const { authUrl, response } = await createOAuthStateWithCookies(request);
 
-  const clientKey = process.env.TIKTOK_CLIENT_KEY || '';
-  const redirectUri = process.env.NEXT_PUBLIC_TIKTOK_REDIRECT_URI || '';
+  // The response already has cookies set. We need to redirect to authUrl
+  // while preserving the cookies. NextResponse.redirect creates a new response,
+  // so we need to copy the cookies.
+  const redirectResponse = NextResponse.redirect(authUrl);
+  
+  // Copy cookies from the internal response to the redirect response
+  // Access the cookies map and copy each one
+  // Copy cookies from the internal response to the redirect response
+  const cookies = response.cookies.getAll();
+  for (const cookie of cookies) {
+    const cookieMaxAge = cookie.name === 'ttsdata_session' ? 3600 : 600;
+    redirectResponse.cookies.set(cookie.name, cookie.value, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: cookieMaxAge,
+      path: '/',
+    });
+  }
 
-  const authUrl = new URL('https://www.tiktok.com/v2/auth/authorize/');
-  authUrl.searchParams.set('client_key', clientKey);
-  authUrl.searchParams.set('redirect_uri', redirectUri);
-  authUrl.searchParams.set('response_type', 'code');
-  authUrl.searchParams.set('scope', 'user.info.basic,user.info.stats,video.list');
-  authUrl.searchParams.set('state', state);
-
-  return NextResponse.redirect(authUrl);
+  return redirectResponse;
 }

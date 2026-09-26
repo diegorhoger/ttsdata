@@ -2,6 +2,9 @@
  * Product discovery page with search, filters, and sorting
  */
 
+export const dynamic = "force-dynamic";
+
+
 interface Product {
   id: string;
   title: string;
