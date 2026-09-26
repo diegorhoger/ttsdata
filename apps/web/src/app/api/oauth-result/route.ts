@@ -46,7 +46,18 @@ export async function GET(request: NextRequest) {
     return response;
   }
 
-  const result = await consumeProbeResult(resultId, sessionId);
+  let result;
+  try {
+    result = await consumeProbeResult(resultId, sessionId);
+  } catch (dbError) {
+    console.error('OAuth result: database exception', dbError);
+    const dbErrorResponse = NextResponse.json(
+      { error: 'Database error during result retrieval' },
+      { status: 500 }
+    );
+    dbErrorResponse.cookies.set('ttsdata_probe_result', '', { maxAge: 0, path: '/' });
+    return dbErrorResponse;
+  }
 
   if (!result.success) {
     const errorResponse = NextResponse.json(
