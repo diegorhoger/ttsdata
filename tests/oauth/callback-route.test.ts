@@ -33,8 +33,7 @@ describe('Callback Route (signed fixtures)', () => {
     vi.resetModules();
     mockConsumeOAuthState.mockReset();
     mockConsumeProbeResult.mockReset();
-    mockClearCookie.mockReset();
-  });
+      });
 
   it('rejects invalid hex state with redirect and clears all cookies', async () => {
     const { GET: callbackGET } = await import('../../../apps/web/src/app/api/auth/tiktok/callback/route');
