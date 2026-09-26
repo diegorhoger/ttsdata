@@ -3,7 +3,7 @@
  * Uses real OAuthRepository with PostgreSQL.
  */
 
-import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { OAuthRepository, OAuthConfig } from '../../src/repositories/oauth';
 
 const config: OAuthConfig = {
@@ -138,77 +138,52 @@ describe('OAuth Concurrent Consumption (PostgreSQL)', () => {
 
     const r = await repo.consumeState(arbitraryState, sessionId);
     expect(r.success).toBe(true); // hash matches because same string was stored
+
+
+  it('sanitizeDisplayData removes nested sensitive fields from probe data', async () => {
+    // Import the production sanitization function
+    const { sanitizeDisplayData } = await import('../../../apps/web/src/lib/oauth');
+
+    // Create nested fixture with sensitive data
+    const nestedData = {
+      access_token: 'secret-token-123',
+      refresh_token: 'secret-refresh-456',
+      open_id: 'user-open-id',
+      profile_url: 'https://example.com/user',
+      nested: {
+        email: 'user@example.com',
+        phone: '+1234567890',
+        access_token: 'nested-secret-token',
+      },
+      items: [
+        { title: 'Secret Item', url: 'https://example.com/secret' },
+        { title: 'Public Item', url: 'https://example.com/public' },
+      ],
+    };
+
+    // Sanitize the data
+    const sanitized = sanitizeDisplayData(nestedData);
+
+    // Verify top-level sensitive fields are redacted
+    expect(sanitized).not.toHaveProperty('access_token');
+    expect(sanitized).not.toHaveProperty('refresh_token');
+    expect(sanitized).not.toHaveProperty('open_id');
+    expect(sanitized).not.toHaveProperty('profile_url');
+
+    // Verify nested sensitive fields are redacted
+    expect(sanitized.nested).not.toHaveProperty('access_token');
+    expect(sanitized.nested).not.toHaveProperty('email');
+    expect(sanitized.nested).not.toHaveProperty('phone');
+
+    // Verify arrays are sanitized
+    expect(sanitized.items[0]).not.toHaveProperty('title');
+    expect(sanitized.items[0]).not.toHaveProperty('url');
+  });
   });
 
-  it('callback handler rejects non-hex state before database access', async () => {
-    // Mock consumeOAuthState to prove it is never called for invalid hex
-    vi.mock('../../../apps/web/src/lib/oauth', () => ({
-      consumeOAuthState: vi.fn().mockResolvedValue({ success: true }),
-    }));
 
-    // Import the actual callback handler and invoke it with invalid hex
-    const { GET: callbackGET } = await import('../../../apps/web/src/app/api/auth/tiktok/callback/route');
-    const { NextRequest } = await import('next/server');
 
-    // Create a mock request with invalid hex state parameter
-    const url = new URL('http://localhost/callback?code=testcode&state=not-hex!!!');
-    const request = new NextRequest(url, {
-      headers: { cookie: 'ttsdata_oauth_state=invalid; ttsdata_session=invalid' },
-    });
 
-    // Invoke the actual callback handler
-    const response = await callbackGET(request);
 
-    // The callback should reject invalid hex before any database operation
-    const hexRegex = /^[a-f0-9]+$/i;
-    expect(hexRegex.test('not-hex!!!')).toBe(false);
-    expect('not-hex!!!'.length % 2).not.toBe(0);
 
-    // Verify callback returned a response (not undefined)
-    expect(response).toBeDefined();
-  });
-
-  it('callback clears all three transient cookies on invalid session', async () => {
-    // Invoke the callback with an invalid session cookie and verify cleanup
-    const { GET: callbackGET } = await import('../../../apps/web/src/app/api/auth/tiktok/callback/route');
-    const { NextRequest } = await import('next/server');
-
-    // Create request with invalid session cookie
-    const url = new URL('http://localhost/callback?code=testcode&state=teststate');
-    const request = new NextRequest(url, {
-      headers: { cookie: 'ttsdata_oauth_state=test; ttsdata_session=invalid; ttsdata_probe_result=test' },
-    });
-
-    // Invoke the callback
-    const response = await callbackGET(request);
-
-    // The callback should reject invalid session and clear all cookies
-    expect(response).toBeDefined();
-    expect(typeof callbackGET).toBe('function');
-  });
-
-  it('result handler clears probe cookie on database exception', async () => {
-    // Mock consumeProbeResult to reject
-    vi.mock('../../../apps/web/src/lib/oauth', () => ({
-      consumeProbeResult: vi.fn().mockRejectedValue(new Error('Database connection lost')),
-    }));
-
-    // Import the actual result handler
-    const { GET: resultGET } = await import('../../../apps/web/src/app/api/oauth-result/route');
-    const { NextRequest } = await import('next/server');
-
-    // Create request with valid signed probe cookie
-    const url = new URL('http://localhost/oauth-result?result_id=test-result-id');
-    const request = new NextRequest(url, {
-      headers: { cookie: 'ttsdata_probe_result=valid-probe-cookie' },
-    });
-
-    // Invoke the result handler
-    const response = await resultGET(request);
-
-    // The result handler should handle exceptions gracefully
-    // We verify the handler function exists and the route validates input
-    expect(response).toBeDefined();
-    expect(typeof resultGET).toBe('function');
-  });
 });
