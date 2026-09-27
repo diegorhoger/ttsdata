@@ -59,3 +59,16 @@ Every mutable record is scoped to a workspace. Parent-child relationships use wo
 The forward migration is generated and immutable once merged. Before production deployment it must be applied to a disposable copy of the production schema and followed by the tenant-isolation integration suite.
 
 `packages/db/drizzle/rollback/0002_worried_lyja.down.sql` is the reviewed emergency rollback for this foundation slice. It removes only CCOS tables and CCOS-owned enum types, in dependency order; it does not modify pre-existing TTSData tables. Because rollback deletes CCOS data, production rollback requires a verified backup/export and explicit operator approval. The deployment gate must test forward migration, rollback, and forward re-application on PostgreSQL before release.
+
+For the pre-merge database gate, create an isolated PostgreSQL database whose name ends in
+`_test`, then run:
+
+```bash
+TEST_DATABASE_URL='postgresql://.../ttsdata_ccos_test' pnpm verify:ccos-postgres
+```
+
+The command fails closed without `TEST_DATABASE_URL` or when the database name does not end
+in `_test`. It applies all migrations, validates the CCOS schema, runs the real constraint and
+tenant-isolation suite, applies the reviewed CCOS rollback, verifies complete removal, removes
+only the matching Drizzle migration-journal row, reapplies the migration, and reruns the suite.
+It must never be pointed at staging or production.

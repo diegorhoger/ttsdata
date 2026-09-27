@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "migrate": "tsx src/migrate.ts",
     "generate": "drizzle-kit generate",
+    "verify:ccos-postgres": "node --import tsx scripts/verify-ccos-postgres.ts",
     "studio": "drizzle-kit studio"
   },
   "dependencies": {
