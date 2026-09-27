@@ -27,7 +27,7 @@ const PRODUCT_TRANSITIONS: Readonly<Record<ProductStatus, readonly ProductStatus
 
 export const CONTENT_STATUSES = [
   'idea', 'planned', 'filming', 'editing', 'ready', 'scheduled', 'published',
-  'ads_authorized', 'monitoring',
+  'ads_authorized', 'monitoring', 'completed',
 ] as const;
 
 export type ContentStatus = (typeof CONTENT_STATUSES)[number];
