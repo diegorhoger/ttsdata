@@ -12,10 +12,14 @@ const config: OAuthConfig = {
   resultSecret: 'test-result-secret',
 };
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const DATABASE_URL = process.env.TEST_DATABASE_URL;
 
 if (!DATABASE_URL) {
-  throw new Error('OAuth integration tests require TEST_DATABASE_URL or DATABASE_URL');
+  throw new Error('OAuth integration tests require TEST_DATABASE_URL');
+}
+
+if (!new URL(DATABASE_URL).pathname.slice(1).endsWith('_test')) {
+  throw new Error('OAuth integration tests require a database name ending in _test');
 }
 
 import { createHmac } from 'crypto';

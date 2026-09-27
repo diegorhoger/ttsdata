@@ -2,10 +2,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 import { CCOSRepository } from '../../src/repositories/ccos';
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const DATABASE_URL = process.env.TEST_DATABASE_URL;
 
 if (!DATABASE_URL) {
-  throw new Error('CCOS integration tests require TEST_DATABASE_URL or DATABASE_URL');
+  throw new Error('CCOS integration tests require TEST_DATABASE_URL');
+}
+
+if (!new URL(DATABASE_URL).pathname.slice(1).endsWith('_test')) {
+  throw new Error('CCOS integration tests require a database name ending in _test');
 }
 
 describe('CCOS tenant isolation (PostgreSQL)', () => {
