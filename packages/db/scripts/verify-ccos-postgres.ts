@@ -15,6 +15,30 @@ const CCOS_TABLES = [
   'ccos_next_actions',
   'ccos_metric_snapshots',
 ] as const;
+const CCOS_FOREIGN_KEYS = [
+  'ccos_contents_workspace_id_workspaces_id_fk',
+  'ccos_contents_workspace_product_fk',
+  'ccos_interactions_workspace_id_workspaces_id_fk',
+  'ccos_interactions_workspace_partnership_fk',
+  'ccos_metric_snapshots_workspace_id_workspaces_id_fk',
+  'ccos_metric_snapshots_workspace_store_fk',
+  'ccos_metric_snapshots_workspace_partnership_fk',
+  'ccos_metric_snapshots_workspace_product_fk',
+  'ccos_metric_snapshots_workspace_content_fk',
+  'ccos_metric_snapshots_workspace_interaction_fk',
+  'ccos_next_actions_workspace_id_workspaces_id_fk',
+  'ccos_next_actions_workspace_owner_fk',
+  'ccos_next_actions_workspace_store_fk',
+  'ccos_next_actions_workspace_partnership_fk',
+  'ccos_next_actions_workspace_product_fk',
+  'ccos_next_actions_workspace_content_fk',
+  'ccos_next_actions_workspace_interaction_fk',
+  'ccos_partnerships_workspace_id_workspaces_id_fk',
+  'ccos_partnerships_workspace_store_fk',
+  'ccos_products_workspace_id_workspaces_id_fk',
+  'ccos_products_workspace_partnership_fk',
+  'ccos_stores_workspace_id_workspaces_id_fk',
+] as const;
 
 if (!TEST_DATABASE_URL) {
   throw new Error('CCOS PostgreSQL verification requires TEST_DATABASE_URL');
@@ -93,13 +117,17 @@ async function assertForwardSchema(): Promise<void> {
     throw new Error(`Expected both exactly-one-target constraints, found ${constraints.rowCount ?? 0}`);
   }
 
-  const ownerForeignKey = await pool.query(
-    `SELECT 1
+  const foreignKeys = await pool.query<{ conname: string }>(
+    `SELECT conname
        FROM pg_constraint
-      WHERE conname = 'ccos_next_actions_workspace_owner_fk'`,
+      WHERE contype = 'f' AND conname = ANY($1::text[])
+      ORDER BY conname`,
+    [CCOS_FOREIGN_KEYS],
   );
-  if (ownerForeignKey.rowCount !== 1) {
-    throw new Error('Missing workspace-bound Next Action owner foreign key');
+  const actualForeignKeys = new Set(foreignKeys.rows.map(({ conname }) => conname));
+  const missingForeignKeys = CCOS_FOREIGN_KEYS.filter((name) => !actualForeignKeys.has(name));
+  if (missingForeignKeys.length > 0) {
+    throw new Error(`Missing CCOS tenant foreign keys: ${missingForeignKeys.join(', ')}`);
   }
 }
 
@@ -134,20 +162,23 @@ async function main(): Promise<void> {
   console.log('3/4 Applying reviewed rollback and checking removal...');
   const rollbackSql = await readFile(rollbackPath, 'utf8');
   const migrationCreatedAt = await getMigrationCreatedAt();
-  await pool.query('BEGIN');
+  const client = await pool.connect();
   try {
-    await pool.query(rollbackSql);
-    const deleted = await pool.query(
+    await client.query('BEGIN');
+    await client.query(rollbackSql);
+    const deleted = await client.query(
       'DELETE FROM drizzle.__drizzle_migrations WHERE created_at = $1 RETURNING id',
       [migrationCreatedAt],
     );
     if (deleted.rowCount !== 1) {
       throw new Error(`Expected one CCOS migration journal row, removed ${deleted.rowCount ?? 0}`);
     }
-    await pool.query('COMMIT');
+    await client.query('COMMIT');
   } catch (error) {
-    await pool.query('ROLLBACK');
+    await client.query('ROLLBACK');
     throw error;
+  } finally {
+    client.release();
   }
   await assertRolledBack();
 

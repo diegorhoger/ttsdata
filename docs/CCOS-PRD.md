@@ -68,7 +68,8 @@ TEST_DATABASE_URL='postgresql://.../ttsdata_ccos_test' pnpm verify:ccos-postgres
 ```
 
 The command fails closed without `TEST_DATABASE_URL` or when the database name does not end
-in `_test`. It applies all migrations, validates the CCOS schema, runs the real constraint and
+in `_test`. It applies all migrations, validates every CCOS tenant foreign key plus the target
+cardinality checks, runs the real constraint and
 tenant-isolation suite, applies the reviewed CCOS rollback, verifies complete removal, removes
 only the matching Drizzle migration-journal row, reapplies the migration, and reruns the suite.
 It must never be pointed at staging or production.
