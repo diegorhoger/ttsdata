@@ -328,8 +328,29 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
     );
     expect(events.rows).toHaveLength(6);
     expect(events.rows.at(-1)?.summary).toBe(
-      `Content ${primary.id} lifecycle changed: scheduled -> published`,
+      `Content ${primary.id} lifecycle changed: scheduled -> published; publication metadata updated`,
     );
+
+    await expect(repository.updateContent(workspaceA, primary.id, {
+      publishedAt: null,
+      publicationUrl: null,
+    })).rejects.toThrow('Invalid CCOS content publication: publishedAt and publicationUrl are required');
+    await repository.updateContent(workspaceA, primary.id, {
+      publicationUrl: 'https://www.tiktok.com/@creator/video/456',
+    });
+    const refreshed = await repository.getContent(workspaceA, primary.id);
+    expect(refreshed).toMatchObject({
+      status: 'published',
+      publishedAt: new Date('2026-10-01T13:00:00.000Z'),
+      publicationUrl: 'https://www.tiktok.com/@creator/video/456',
+    });
+    const auditedEdit = await pool.query<{ summary: string }>(
+      `SELECT summary FROM ccos_interactions
+        WHERE workspace_id = $1 AND partnership_id = $2 AND channel = 'content_lifecycle'
+        ORDER BY occurred_at DESC LIMIT 1`,
+      [workspaceA, partnership.id],
+    );
+    expect(auditedEdit.rows[0].summary).toBe(`Content ${primary.id} publication metadata updated`);
   });
 
   it('serializes mutually exclusive content transitions', async () => {
