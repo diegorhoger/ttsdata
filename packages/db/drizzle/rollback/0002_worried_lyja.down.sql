@@ -9,6 +9,8 @@ DROP TABLE IF EXISTS "ccos_products";
 DROP TABLE IF EXISTS "ccos_partnerships";
 DROP TABLE IF EXISTS "ccos_stores";
 
+DROP INDEX IF EXISTS "users_workspace_id_id_idx";
+
 DROP TYPE IF EXISTS "ccos_content_status";
 DROP TYPE IF EXISTS "ccos_interaction_direction";
 DROP TYPE IF EXISTS "ccos_next_action_status";

@@ -2,7 +2,11 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 import { CCOSRepository } from '../../src/repositories/ccos';
 
-const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://postgres:***@127.0.0.1:5432/ttsdata_test';
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+
+if (!DATABASE_URL) {
+  throw new Error('CCOS integration tests require TEST_DATABASE_URL or DATABASE_URL');
+}
 
 describe('CCOS tenant isolation (PostgreSQL)', () => {
   const pool = new Pool({ connectionString: DATABASE_URL });

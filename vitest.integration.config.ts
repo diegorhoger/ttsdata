@@ -3,11 +3,11 @@ import { resolve } from 'node:path';
 
 export default defineConfig({
   test: {
-    include: ['tests/**/*.test.ts', 'packages/db/tests/**/*.test.ts'],
-    exclude: ['packages/db/tests/**/integration.test.ts'],
+    include: ['packages/db/tests/**/integration.test.ts'],
     environment: 'node',
     globals: true,
-    cacheDir: '.vitest-cache',
+    fileParallelism: false,
+    cacheDir: '.vitest-integration-cache',
   },
   resolve: {
     alias: {

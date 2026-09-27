@@ -11,6 +11,7 @@
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "db:migrate": "pnpm --filter @ttsdata/db migrate",
     "db:generate": "pnpm --filter @ttsdata/db generate",
     "worker": "pnpm --filter @ttsdata/worker dev",
