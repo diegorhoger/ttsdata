@@ -18,7 +18,7 @@ const { mockConsumeProbeResult } = vi.hoisted(() => ({
   mockConsumeProbeResult: vi.fn(),
 }));
 
-vi.mock('../../../apps/web/src/lib/oauth', async (importActual) => {
+vi.mock('../../apps/web/src/lib/oauth', async (importActual) => {
   const actual = await importActual();
   return {
     ...actual,
@@ -33,14 +33,14 @@ describe('Result Route (signed fixtures)', () => {
   });
 
   it('returns 500 and clears probe cookie on database exception', async () => {
-    const { GET: resultGET } = await import('../../../apps/web/src/app/api/oauth-result/route');
+    const { GET: resultGET } = await import('../../apps/web/src/app/api/oauth-result/route');
 
     // Create request with valid signed probe cookie
     const resultId = 'test-result-id';
     const sessionId = 'test-session';
 
     // Build a valid signed probe cookie using production signing
-    const { createProbeCookie } = await import('../../../apps/web/src/lib/oauth');
+    const { createProbeCookie } = await import('../../apps/web/src/lib/oauth');
     const signedProbeCookie = createProbeCookie(resultId, sessionId);
 
     const url = new URL('http://localhost/oauth-result?result_id=' + resultId);
@@ -77,7 +77,7 @@ describe('Result Route (signed fixtures)', () => {
   });
 
   it('returns 403 and clears probe cookie on missing session', async () => {
-    const { GET: resultGET } = await import('../../../apps/web/src/app/api/oauth-result/route');
+    const { GET: resultGET } = await import('../../apps/web/src/app/api/oauth-result/route');
 
     // Create request without session cookie
     const url = new URL('http://localhost/oauth-result?result_id=test-result-id');
