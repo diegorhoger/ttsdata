@@ -19,7 +19,7 @@ const { mockConsumeOAuthState, mockConsumeProbeResult } = vi.hoisted(() => ({
   mockConsumeProbeResult: vi.fn(),
 }));
 
-vi.mock('../../../apps/web/src/lib/oauth', async (importActual) => {
+vi.mock('../../apps/web/src/lib/oauth', async (importActual) => {
   const actual = await importActual();
   return {
     ...actual,
@@ -36,14 +36,14 @@ describe('Callback Route (signed fixtures)', () => {
       });
 
   it('rejects invalid hex state with redirect and clears all cookies', async () => {
-    const { GET: callbackGET } = await import('../../../apps/web/src/app/api/auth/tiktok/callback/route');
+    const { GET: callbackGET } = await import('../../apps/web/src/app/api/auth/tiktok/callback/route');
 
     // Create request with valid signed state cookie containing non-hex state
     const rawState = 'not-hex!!!';
     const sessionId = 'test-session';
 
     // Build a valid signed state cookie using production signing
-    const { createStateCookie } = await import('../../../apps/web/src/lib/oauth');
+    const { createStateCookie } = await import('../../apps/web/src/lib/oauth');
     const signedStateCookie = createStateCookie(rawState);
 
     const url = new URL('http://localhost/callback?code=testcode&state=not-hex!!!');
@@ -78,13 +78,13 @@ describe('Callback Route (signed fixtures)', () => {
   });
 
   it('rejects invalid session with redirect and clears all cookies', async () => {
-    const { GET: callbackGET } = await import('../../../apps/web/src/app/api/auth/tiktok/callback/route');
+    const { GET: callbackGET } = await import('../../apps/web/src/app/api/auth/tiktok/callback/route');
 
     // Create request with valid signed state cookie and matching hex state
     const rawState = 'a'.repeat(64); // valid hex
     const sessionId = 'test-session';
 
-    const { createStateCookie } = await import('../../../apps/web/src/lib/oauth');
+    const { createStateCookie } = await import('../../apps/web/src/lib/oauth');
     const signedStateCookie = createStateCookie(rawState);
 
     const url = new URL('http://localhost/callback?code=testcode&state=' + rawState);
