@@ -142,7 +142,7 @@ describe('OAuth Concurrent Consumption (PostgreSQL)', () => {
 
   it('sanitizeDisplayData preserves keys and redacts sensitive values recursively', async () => {
     // Import the production sanitization function
-    const { sanitizeDisplayData } = await import('../../../apps/web/src/lib/oauth');
+    const { sanitizeDisplayData } = await import('../../../../apps/web/src/lib/oauth');
 
     // Create nested fixture with sensitive data
     const nestedData = {
