@@ -26,8 +26,10 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
   });
 
   afterAll(async () => {
+    // Delete users first (they reference workspaces via foreign key)
     const workspaceIds = [workspaceA, workspaceB].filter(Boolean);
     if (workspaceIds.length > 0) {
+      await pool.query('DELETE FROM users WHERE workspace_id = ANY($1::uuid[])', [workspaceIds]);
       await pool.query('DELETE FROM workspaces WHERE id = ANY($1::uuid[])', [workspaceIds]);
     }
     await pool.end();
