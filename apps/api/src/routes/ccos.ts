@@ -10,7 +10,7 @@ import {
   type UpdateCCOSStoreInput,
 } from '@ttsdata/db';
 import { pool } from '../lib/db';
-import { requireAuth } from '../lib/auth';
+import { requireAuth, requireRoles } from '../lib/auth';
 import { AppError } from '../lib/errors';
 
 const partnershipType = z.enum([
@@ -20,6 +20,12 @@ const partnershipStatus = z.enum([
   'lead', 'contacted', 'negotiating', 'active', 'waiting', 'paused', 'completed', 'declined', 'cancelled',
 ]);
 const priority = z.enum(['low', 'normal', 'high', 'urgent']);
+const dateValue: z.ZodType<Date, z.ZodTypeDef, unknown> = z.preprocess(
+  (value) => typeof value === 'string' ? new Date(value) : value,
+  z.date(),
+);
+const storeParamsSchema = z.object({ storeId: z.string().uuid() }).strict();
+const partnershipParamsSchema = z.object({ partnershipId: z.string().uuid() }).strict();
 
 const createStoreSchema = z.object({
   name: z.string().trim().min(1).max(255),
@@ -40,7 +46,7 @@ const createPartnershipSchema = z.object({
   title: z.string().trim().min(1).max(255).optional(),
   terms: z.string().max(20_000).optional(),
   priority: priority.optional(),
-  lastContactAt: z.coerce.date().optional(),
+  lastContactAt: dateValue.optional(),
 }).strict();
 
 const updatePartnershipSchema = z.object({
@@ -49,7 +55,7 @@ const updatePartnershipSchema = z.object({
   title: z.string().trim().min(1).max(255).nullable().optional(),
   terms: z.string().max(20_000).nullable().optional(),
   priority: priority.optional(),
-  lastContactAt: z.coerce.date().nullable().optional(),
+  lastContactAt: dateValue.nullable().optional(),
 }).strict().refine((body) => Object.keys(body).length > 0, 'At least one field is required');
 
 type StorePartnershipRepository = {
@@ -67,7 +73,7 @@ type StorePartnershipRepository = {
   ): Promise<CCOSPartnershipRecord | null>;
 };
 
-function parse<T>(schema: z.ZodType<T>, input: unknown): T {
+function parse<T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, input: unknown): T {
   const result = schema.safeParse(input);
   if (!result.success) {
     throw new AppError('Request validation failed', 400, 'VALIDATION_ERROR', {
@@ -85,26 +91,27 @@ export type CCOSRouteOptions = {
 export async function registerCCOSRoutes(app: FastifyInstance, options: CCOSRouteOptions = {}) {
   const repository = options.repository ?? new CCOSRepository(pool);
   const authenticate = options.authenticate ?? requireAuth;
+  const authorizeWorkspaceWrite = requireRoles('owner', 'admin');
 
   app.get('/stores', { preHandler: authenticate }, async (request, reply) => {
     return reply.send({ stores: await repository.listStores(request.auth!.workspaceId) });
   });
 
-  app.post('/stores', { preHandler: authenticate }, async (request, reply) => {
+  app.post('/stores', { preHandler: [authenticate, authorizeWorkspaceWrite] }, async (request, reply) => {
     const body = parse(createStoreSchema, request.body);
     const store = await repository.createStore({ workspaceId: request.auth!.workspaceId, ...body });
     return reply.status(201).send({ store });
   });
 
   app.get('/stores/:storeId', { preHandler: authenticate }, async (request, reply) => {
-    const { storeId } = request.params as { storeId: string };
+    const { storeId } = parse(storeParamsSchema, request.params);
     const store = await repository.getStore(request.auth!.workspaceId, storeId);
     if (!store) throw new AppError('Store not found', 404, 'NOT_FOUND');
     return reply.send({ store });
   });
 
-  app.patch('/stores/:storeId', { preHandler: authenticate }, async (request, reply) => {
-    const { storeId } = request.params as { storeId: string };
+  app.patch('/stores/:storeId', { preHandler: [authenticate, authorizeWorkspaceWrite] }, async (request, reply) => {
+    const { storeId } = parse(storeParamsSchema, request.params);
     const store = await repository.updateStore(
       request.auth!.workspaceId,
       storeId,
@@ -121,8 +128,10 @@ export async function registerCCOSRoutes(app: FastifyInstance, options: CCOSRout
     });
   });
 
-  app.post('/stores/:storeId/partnerships', { preHandler: authenticate }, async (request, reply) => {
-    const { storeId } = request.params as { storeId: string };
+  app.post('/stores/:storeId/partnerships', {
+    preHandler: [authenticate, authorizeWorkspaceWrite],
+  }, async (request, reply) => {
+    const { storeId } = parse(storeParamsSchema, request.params);
     const workspaceId = request.auth!.workspaceId;
     if (!await repository.getStore(workspaceId, storeId)) {
       throw new AppError('Store not found', 404, 'NOT_FOUND');
@@ -136,14 +145,16 @@ export async function registerCCOSRoutes(app: FastifyInstance, options: CCOSRout
   });
 
   app.get('/partnerships/:partnershipId', { preHandler: authenticate }, async (request, reply) => {
-    const { partnershipId } = request.params as { partnershipId: string };
+    const { partnershipId } = parse(partnershipParamsSchema, request.params);
     const partnership = await repository.getPartnership(request.auth!.workspaceId, partnershipId);
     if (!partnership) throw new AppError('Partnership not found', 404, 'NOT_FOUND');
     return reply.send({ partnership });
   });
 
-  app.patch('/partnerships/:partnershipId', { preHandler: authenticate }, async (request, reply) => {
-    const { partnershipId } = request.params as { partnershipId: string };
+  app.patch('/partnerships/:partnershipId', {
+    preHandler: [authenticate, authorizeWorkspaceWrite],
+  }, async (request, reply) => {
+    const { partnershipId } = parse(partnershipParamsSchema, request.params);
     try {
       const partnership = await repository.updatePartnership(
         request.auth!.workspaceId,

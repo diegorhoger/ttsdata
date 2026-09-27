@@ -49,7 +49,10 @@ function createRepository() {
   };
 }
 
-async function buildApp(repository: ReturnType<typeof createRepository>) {
+async function buildApp(
+  repository: ReturnType<typeof createRepository>,
+  role: 'owner' | 'admin' | 'analyst' | 'viewer' = 'owner',
+) {
   const app = Fastify({ logger: false });
   app.setErrorHandler(errorHandler);
   const authenticate = async (request: FastifyRequest, _reply: FastifyReply) => {
@@ -57,7 +60,7 @@ async function buildApp(repository: ReturnType<typeof createRepository>) {
       userId: '44444444-4444-4444-8444-444444444444',
       workspaceId: WORKSPACE_ID,
       email: 'creator@example.test',
-      role: 'owner',
+      role,
       planCode: 'beta',
     };
   };
@@ -110,6 +113,24 @@ describe('CCOS store and partnership routes', () => {
     expect(repository.createStore).not.toHaveBeenCalled();
   });
 
+  it('allows viewers to read but forbids workspace-wide mutations', async () => {
+    const repository = createRepository();
+    const app = await buildApp(repository, 'viewer');
+    apps.push(app);
+
+    const readResponse = await app.inject({ method: 'GET', url: '/api/ccos/stores' });
+    const writeResponse = await app.inject({
+      method: 'POST',
+      url: '/api/ccos/stores',
+      payload: { name: 'Forbidden Brand' },
+    });
+
+    expect(readResponse.statusCode).toBe(200);
+    expect(writeResponse.statusCode).toBe(403);
+    expect(writeResponse.json()).toMatchObject({ error: 'FORBIDDEN' });
+    expect(repository.createStore).not.toHaveBeenCalled();
+  });
+
   it('fails closed when a store is absent from the authenticated workspace', async () => {
     const repository = createRepository();
     repository.getStore.mockResolvedValueOnce(null);
@@ -120,6 +141,24 @@ describe('CCOS store and partnership routes', () => {
 
     expect(response.statusCode).toBe(404);
     expect(repository.getStore).toHaveBeenCalledWith(WORKSPACE_ID, STORE_ID);
+  });
+
+  it('rejects malformed entity identifiers before repository access', async () => {
+    const repository = createRepository();
+    const app = await buildApp(repository);
+    apps.push(app);
+
+    const storeResponse = await app.inject({ method: 'GET', url: '/api/ccos/stores/not-a-uuid' });
+    const partnershipResponse = await app.inject({
+      method: 'PATCH',
+      url: '/api/ccos/partnerships/not-a-uuid',
+      payload: { status: 'contacted' },
+    });
+
+    expect(storeResponse.statusCode).toBe(400);
+    expect(partnershipResponse.statusCode).toBe(400);
+    expect(repository.getStore).not.toHaveBeenCalled();
+    expect(repository.updatePartnership).not.toHaveBeenCalled();
   });
 
   it('creates a partnership only after a tenant-scoped store lookup', async () => {
@@ -141,6 +180,21 @@ describe('CCOS store and partnership routes', () => {
       type: 'inbound_invite',
       priority: 'high',
     });
+  });
+
+  it('rejects null contact timestamps instead of coercing them to the Unix epoch', async () => {
+    const repository = createRepository();
+    const app = await buildApp(repository);
+    apps.push(app);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/ccos/stores/${STORE_ID}/partnerships`,
+      payload: { type: 'inbound_invite', lastContactAt: null },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(repository.createPartnership).not.toHaveBeenCalled();
   });
 
   it('returns a conflict for an invalid partnership transition', async () => {
