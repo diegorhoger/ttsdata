@@ -186,11 +186,11 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
       [workspaceA, partnership.id],
     );
     expect(events.rows.map(({ summary }) => summary)).toEqual([
-      'Product lifecycle changed: proposed -> selected',
-      'Product lifecycle changed: selected -> sample_requested',
-      'Product lifecycle changed: sample_requested -> sample_approved',
-      'Product lifecycle changed: sample_approved -> shipped',
-      'Product lifecycle changed: shipped -> received',
+      `Product ${product.id} lifecycle changed: proposed -> selected`,
+      `Product ${product.id} lifecycle changed: selected -> sample_requested`,
+      `Product ${product.id} lifecycle changed: sample_requested -> sample_approved`,
+      `Product ${product.id} lifecycle changed: sample_approved -> shipped`,
+      `Product ${product.id} lifecycle changed: shipped -> received`,
     ]);
   });
 

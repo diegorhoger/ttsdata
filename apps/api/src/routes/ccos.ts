@@ -28,7 +28,12 @@ const productStatus = z.enum([
   'content_queue', 'in_production', 'content_live', 'monitoring', 'declined', 'cancelled',
   'out_of_stock', 'replacement_needed', 'paused', 'completed',
 ]);
-const decimalValue = z.string().regex(/^\d+(?:\.\d{1,6})?$/, 'Must be a non-negative decimal with up to 6 places');
+const decimalValue = (maxIntegerDigits: number) => z.string().regex(
+  new RegExp(`^\\d{1,${maxIntegerDigits}}(?:\\.\\d{1,6})?$`),
+  `Must be a non-negative decimal with at most ${maxIntegerDigits} integer and 6 fractional digits`,
+);
+const amountValue = decimalValue(14); // numeric(20,6)
+const rateValue = decimalValue(3); // numeric(9,6)
 const dateValue: z.ZodType<Date, z.ZodTypeDef, unknown> = z.preprocess(
   (value) => typeof value === 'string' ? new Date(value) : value,
   z.date(),
@@ -72,10 +77,10 @@ const createProductSchema = z.object({
   name: z.string().trim().min(1).max(512),
   sku: z.string().trim().min(1).max(128).optional(),
   productUrl: z.string().url().max(2048).optional(),
-  priceAmount: decimalValue.optional(),
+  priceAmount: amountValue.optional(),
   currency: z.string().trim().length(3).transform((value) => value.toUpperCase()).optional(),
-  commissionRate: decimalValue.optional(),
-  commissionAmount: decimalValue.optional(),
+  commissionRate: rateValue.optional(),
+  commissionAmount: amountValue.optional(),
   stockState: z.string().trim().min(1).max(64).optional(),
   trackingCode: z.string().trim().min(1).max(255).optional(),
   shippedAt: dateValue.optional(),
@@ -89,10 +94,10 @@ const updateProductSchema = z.object({
   name: z.string().trim().min(1).max(512).optional(),
   sku: z.string().trim().min(1).max(128).nullable().optional(),
   productUrl: z.string().url().max(2048).nullable().optional(),
-  priceAmount: decimalValue.nullable().optional(),
+  priceAmount: amountValue.nullable().optional(),
   currency: z.string().trim().length(3).transform((value) => value.toUpperCase()).nullable().optional(),
-  commissionRate: decimalValue.nullable().optional(),
-  commissionAmount: decimalValue.nullable().optional(),
+  commissionRate: rateValue.nullable().optional(),
+  commissionAmount: amountValue.nullable().optional(),
   stockState: z.string().trim().min(1).max(64).nullable().optional(),
   status: productStatus.optional(),
   trackingCode: z.string().trim().min(1).max(255).nullable().optional(),

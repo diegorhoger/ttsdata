@@ -395,7 +395,11 @@ export class CCOSRepository {
           `INSERT INTO ccos_interactions
            (workspace_id, partnership_id, direction, channel, summary, occurred_at, source)
            VALUES ($1, $2, 'system', 'product_lifecycle', $3, NOW(), 'system')`,
-          [workspaceId, current.partnershipId, `Product lifecycle changed: ${current.status} -> ${input.status}`],
+          [
+            workspaceId,
+            current.partnershipId,
+            `Product ${current.id} lifecycle changed: ${current.status} -> ${input.status}`,
+          ],
         );
       }
       await client.query('COMMIT');

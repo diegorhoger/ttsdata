@@ -295,6 +295,27 @@ describe('CCOS store and partnership routes', () => {
     });
   });
 
+  it('rejects decimal values that exceed the database precision before repository access', async () => {
+    const repository = createRepository();
+    const app = await buildApp(repository);
+    apps.push(app);
+
+    const amountResponse = await app.inject({
+      method: 'POST',
+      url: `/api/ccos/partnerships/${PARTNERSHIP_ID}/products`,
+      payload: { name: 'Overflow amount', priceAmount: '100000000000000' },
+    });
+    const rateResponse = await app.inject({
+      method: 'POST',
+      url: `/api/ccos/partnerships/${PARTNERSHIP_ID}/products`,
+      payload: { name: 'Overflow rate', commissionRate: '1000.000000' },
+    });
+
+    expect(amountResponse.statusCode).toBe(400);
+    expect(rateResponse.statusCode).toBe(400);
+    expect(repository.createProduct).not.toHaveBeenCalled();
+  });
+
   it('returns a conflict for an invalid product lifecycle shortcut', async () => {
     const repository = createRepository();
     repository.updateProduct.mockRejectedValueOnce(
