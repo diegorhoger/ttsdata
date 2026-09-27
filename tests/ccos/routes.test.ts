@@ -9,6 +9,7 @@ import { errorHandler } from '../../apps/api/src/lib/errors';
 const WORKSPACE_ID = '11111111-1111-4111-8111-111111111111';
 const STORE_ID = '22222222-2222-4222-8222-222222222222';
 const PARTNERSHIP_ID = '33333333-3333-4333-8333-333333333333';
+const PRODUCT_ID = '55555555-5555-4555-8555-555555555555';
 const NOW = new Date('2026-09-27T12:00:00.000Z');
 
 const store = {
@@ -36,6 +37,29 @@ const partnership = {
   updatedAt: NOW,
 };
 
+const product = {
+  id: PRODUCT_ID,
+  workspaceId: WORKSPACE_ID,
+  partnershipId: PARTNERSHIP_ID,
+  name: 'Sample Product',
+  sku: null,
+  productUrl: null,
+  priceAmount: null,
+  currency: null,
+  commissionRate: null,
+  commissionAmount: null,
+  stockState: null,
+  status: 'proposed' as const,
+  trackingCode: null,
+  shippedAt: null,
+  receivedAt: null,
+  priority: 'normal' as const,
+  source: 'manual',
+  provenance: null,
+  createdAt: NOW,
+  updatedAt: NOW,
+};
+
 function createRepository() {
   return {
     createStore: vi.fn().mockResolvedValue(store),
@@ -46,6 +70,10 @@ function createRepository() {
     listPartnerships: vi.fn().mockResolvedValue([partnership]),
     getPartnership: vi.fn().mockResolvedValue(partnership),
     updatePartnership: vi.fn().mockResolvedValue(partnership),
+    createProduct: vi.fn().mockResolvedValue(product),
+    listProducts: vi.fn().mockResolvedValue([product]),
+    getProduct: vi.fn().mockResolvedValue(product),
+    updateProduct: vi.fn().mockResolvedValue(product),
   };
 }
 
@@ -218,5 +246,124 @@ describe('CCOS store and partnership routes', () => {
       PARTNERSHIP_ID,
       { status: 'active' },
     );
+  });
+
+  it('creates a product only after a tenant-scoped partnership lookup', async () => {
+    const repository = createRepository();
+    const app = await buildApp(repository);
+    apps.push(app);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/ccos/partnerships/${PARTNERSHIP_ID}/products`,
+      payload: {
+        name: 'Sample Product',
+        priceAmount: '49.900000',
+        currency: 'brl',
+        commissionRate: '0.150000',
+      },
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(repository.getPartnership).toHaveBeenCalledWith(WORKSPACE_ID, PARTNERSHIP_ID);
+    expect(repository.createProduct).toHaveBeenCalledWith({
+      workspaceId: WORKSPACE_ID,
+      partnershipId: PARTNERSHIP_ID,
+      name: 'Sample Product',
+      priceAmount: '49.900000',
+      currency: 'BRL',
+      commissionRate: '0.150000',
+    });
+  });
+
+  it('does not fabricate unavailable logistics or commercial fields', async () => {
+    const repository = createRepository();
+    const app = await buildApp(repository);
+    apps.push(app);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/ccos/partnerships/${PARTNERSHIP_ID}/products`,
+      payload: { name: 'Unknown logistics' },
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(repository.createProduct).toHaveBeenCalledWith({
+      workspaceId: WORKSPACE_ID,
+      partnershipId: PARTNERSHIP_ID,
+      name: 'Unknown logistics',
+    });
+  });
+
+  it('rejects decimal values that exceed the database precision before repository access', async () => {
+    const repository = createRepository();
+    const app = await buildApp(repository);
+    apps.push(app);
+
+    const amountResponse = await app.inject({
+      method: 'POST',
+      url: `/api/ccos/partnerships/${PARTNERSHIP_ID}/products`,
+      payload: { name: 'Overflow amount', priceAmount: '100000000000000' },
+    });
+    const rateResponse = await app.inject({
+      method: 'POST',
+      url: `/api/ccos/partnerships/${PARTNERSHIP_ID}/products`,
+      payload: { name: 'Overflow rate', commissionRate: '1000.000000' },
+    });
+
+    expect(amountResponse.statusCode).toBe(400);
+    expect(rateResponse.statusCode).toBe(400);
+    expect(repository.createProduct).not.toHaveBeenCalled();
+  });
+
+  it('returns a conflict for an invalid product lifecycle shortcut', async () => {
+    const repository = createRepository();
+    repository.updateProduct.mockRejectedValueOnce(
+      new Error('Invalid CCOS product transition: proposed -> content_live'),
+    );
+    const app = await buildApp(repository);
+    apps.push(app);
+
+    const response = await app.inject({
+      method: 'PATCH',
+      url: `/api/ccos/products/${PRODUCT_ID}`,
+      payload: { status: 'content_live' },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ error: 'INVALID_TRANSITION' });
+  });
+
+  it('rejects malformed product IDs and null create timestamps before repository access', async () => {
+    const repository = createRepository();
+    const app = await buildApp(repository);
+    apps.push(app);
+
+    const idResponse = await app.inject({ method: 'GET', url: '/api/ccos/products/not-a-uuid' });
+    const timestampResponse = await app.inject({
+      method: 'POST',
+      url: `/api/ccos/partnerships/${PARTNERSHIP_ID}/products`,
+      payload: { name: 'Sample Product', shippedAt: null },
+    });
+
+    expect(idResponse.statusCode).toBe(400);
+    expect(timestampResponse.statusCode).toBe(400);
+    expect(repository.getProduct).not.toHaveBeenCalled();
+    expect(repository.createProduct).not.toHaveBeenCalled();
+  });
+
+  it('keeps product mutations restricted to owners and admins', async () => {
+    const repository = createRepository();
+    const app = await buildApp(repository, 'viewer');
+    apps.push(app);
+
+    const readResponse = await app.inject({ method: 'GET', url: `/api/ccos/products/${PRODUCT_ID}` });
+    const writeResponse = await app.inject({
+      method: 'PATCH', url: `/api/ccos/products/${PRODUCT_ID}`, payload: { status: 'selected' },
+    });
+
+    expect(readResponse.statusCode).toBe(200);
+    expect(writeResponse.statusCode).toBe(403);
+    expect(repository.updateProduct).not.toHaveBeenCalled();
   });
 });

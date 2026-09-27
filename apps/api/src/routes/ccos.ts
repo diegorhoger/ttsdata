@@ -3,10 +3,13 @@ import { z } from 'zod';
 import {
   CCOSRepository,
   type CCOSPartnershipRecord,
+  type CCOSProductRecord,
   type CCOSStoreRecord,
   type CreateCCOSPartnershipInput,
+  type CreateCCOSProductInput,
   type CreateCCOSStoreInput,
   type UpdateCCOSPartnershipInput,
+  type UpdateCCOSProductInput,
   type UpdateCCOSStoreInput,
 } from '@ttsdata/db';
 import { pool } from '../lib/db';
@@ -20,12 +23,24 @@ const partnershipStatus = z.enum([
   'lead', 'contacted', 'negotiating', 'active', 'waiting', 'paused', 'completed', 'declined', 'cancelled',
 ]);
 const priority = z.enum(['low', 'normal', 'high', 'urgent']);
+const productStatus = z.enum([
+  'proposed', 'selected', 'sample_requested', 'sample_approved', 'shipped', 'received',
+  'content_queue', 'in_production', 'content_live', 'monitoring', 'declined', 'cancelled',
+  'out_of_stock', 'replacement_needed', 'paused', 'completed',
+]);
+const decimalValue = (maxIntegerDigits: number) => z.string().regex(
+  new RegExp(`^\\d{1,${maxIntegerDigits}}(?:\\.\\d{1,6})?$`),
+  `Must be a non-negative decimal with at most ${maxIntegerDigits} integer and 6 fractional digits`,
+);
+const amountValue = decimalValue(14); // numeric(20,6)
+const rateValue = decimalValue(3); // numeric(9,6)
 const dateValue: z.ZodType<Date, z.ZodTypeDef, unknown> = z.preprocess(
   (value) => typeof value === 'string' ? new Date(value) : value,
   z.date(),
 );
 const storeParamsSchema = z.object({ storeId: z.string().uuid() }).strict();
 const partnershipParamsSchema = z.object({ partnershipId: z.string().uuid() }).strict();
+const productParamsSchema = z.object({ productId: z.string().uuid() }).strict();
 
 const createStoreSchema = z.object({
   name: z.string().trim().min(1).max(255),
@@ -58,6 +73,40 @@ const updatePartnershipSchema = z.object({
   lastContactAt: dateValue.nullable().optional(),
 }).strict().refine((body) => Object.keys(body).length > 0, 'At least one field is required');
 
+const createProductSchema = z.object({
+  name: z.string().trim().min(1).max(512),
+  sku: z.string().trim().min(1).max(128).optional(),
+  productUrl: z.string().url().max(2048).optional(),
+  priceAmount: amountValue.optional(),
+  currency: z.string().trim().length(3).transform((value) => value.toUpperCase()).optional(),
+  commissionRate: rateValue.optional(),
+  commissionAmount: amountValue.optional(),
+  stockState: z.string().trim().min(1).max(64).optional(),
+  trackingCode: z.string().trim().min(1).max(255).optional(),
+  shippedAt: dateValue.optional(),
+  receivedAt: dateValue.optional(),
+  priority: priority.optional(),
+  source: z.string().trim().min(1).max(64).optional(),
+  provenance: z.unknown().optional(),
+}).strict();
+
+const updateProductSchema = z.object({
+  name: z.string().trim().min(1).max(512).optional(),
+  sku: z.string().trim().min(1).max(128).nullable().optional(),
+  productUrl: z.string().url().max(2048).nullable().optional(),
+  priceAmount: amountValue.nullable().optional(),
+  currency: z.string().trim().length(3).transform((value) => value.toUpperCase()).nullable().optional(),
+  commissionRate: rateValue.nullable().optional(),
+  commissionAmount: amountValue.nullable().optional(),
+  stockState: z.string().trim().min(1).max(64).nullable().optional(),
+  status: productStatus.optional(),
+  trackingCode: z.string().trim().min(1).max(255).nullable().optional(),
+  shippedAt: dateValue.nullable().optional(),
+  receivedAt: dateValue.nullable().optional(),
+  priority: priority.optional(),
+  provenance: z.unknown().optional(),
+}).strict().refine((body) => Object.keys(body).length > 0, 'At least one field is required');
+
 type StorePartnershipRepository = {
   createStore(input: CreateCCOSStoreInput): Promise<CCOSStoreRecord>;
   listStores(workspaceId: string): Promise<CCOSStoreRecord[]>;
@@ -71,6 +120,14 @@ type StorePartnershipRepository = {
     partnershipId: string,
     input: UpdateCCOSPartnershipInput,
   ): Promise<CCOSPartnershipRecord | null>;
+  createProduct(input: CreateCCOSProductInput): Promise<CCOSProductRecord>;
+  listProducts(workspaceId: string, partnershipId?: string): Promise<CCOSProductRecord[]>;
+  getProduct(workspaceId: string, productId: string): Promise<CCOSProductRecord | null>;
+  updateProduct(
+    workspaceId: string,
+    productId: string,
+    input: UpdateCCOSProductInput,
+  ): Promise<CCOSProductRecord | null>;
 };
 
 function parse<T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, input: unknown): T {
@@ -165,6 +222,56 @@ export async function registerCCOSRoutes(app: FastifyInstance, options: CCOSRout
       return reply.send({ partnership });
     } catch (error) {
       if (error instanceof Error && error.message.startsWith('Invalid CCOS partnership transition:')) {
+        throw new AppError(error.message, 409, 'INVALID_TRANSITION');
+      }
+      throw error;
+    }
+  });
+
+  app.get('/products', { preHandler: authenticate }, async (request, reply) => {
+    const query = parse(z.object({ partnershipId: z.string().uuid().optional() }).strict(), request.query);
+    return reply.send({
+      products: await repository.listProducts(request.auth!.workspaceId, query.partnershipId),
+    });
+  });
+
+  app.post('/partnerships/:partnershipId/products', {
+    preHandler: [authenticate, authorizeWorkspaceWrite],
+  }, async (request, reply) => {
+    const { partnershipId } = parse(partnershipParamsSchema, request.params);
+    const workspaceId = request.auth!.workspaceId;
+    if (!await repository.getPartnership(workspaceId, partnershipId)) {
+      throw new AppError('Partnership not found', 404, 'NOT_FOUND');
+    }
+    const product = await repository.createProduct({
+      workspaceId,
+      partnershipId,
+      ...parse(createProductSchema, request.body),
+    });
+    return reply.status(201).send({ product });
+  });
+
+  app.get('/products/:productId', { preHandler: authenticate }, async (request, reply) => {
+    const { productId } = parse(productParamsSchema, request.params);
+    const product = await repository.getProduct(request.auth!.workspaceId, productId);
+    if (!product) throw new AppError('Product not found', 404, 'NOT_FOUND');
+    return reply.send({ product });
+  });
+
+  app.patch('/products/:productId', {
+    preHandler: [authenticate, authorizeWorkspaceWrite],
+  }, async (request, reply) => {
+    const { productId } = parse(productParamsSchema, request.params);
+    try {
+      const product = await repository.updateProduct(
+        request.auth!.workspaceId,
+        productId,
+        parse(updateProductSchema, request.body),
+      );
+      if (!product) throw new AppError('Product not found', 404, 'NOT_FOUND');
+      return reply.send({ product });
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('Invalid CCOS product transition:')) {
         throw new AppError(error.message, 409, 'INVALID_TRANSITION');
       }
       throw error;
