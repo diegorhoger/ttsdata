@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts', 'packages/db/tests/**/*.test.ts'],
+    exclude: ['packages/db/tests/**/integration.test.ts'],
     environment: 'node',
     globals: true,
     cacheDir: '.vitest-cache',

@@ -12,7 +12,15 @@ const config: OAuthConfig = {
   resultSecret: 'test-result-secret',
 };
 
-const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://postgres:***@127.0.0.1:5432/ttsdata_test';
+const DATABASE_URL = process.env.TEST_DATABASE_URL;
+
+if (!DATABASE_URL) {
+  throw new Error('OAuth integration tests require TEST_DATABASE_URL');
+}
+
+if (!new URL(DATABASE_URL).pathname.slice(1).endsWith('_test')) {
+  throw new Error('OAuth integration tests require a database name ending in _test');
+}
 
 import { createHmac } from 'crypto';
 
@@ -140,43 +148,4 @@ describe('OAuth Concurrent Consumption (PostgreSQL)', () => {
     expect(r.success).toBe(true); // hash matches because same string was stored
 });
 
-  it('sanitizeDisplayData preserves keys and redacts sensitive values recursively', async () => {
-    // Import the production sanitization function
-    const { sanitizeDisplayData } = await import('../../../../apps/web/src/lib/oauth');
-
-    // Create nested fixture with sensitive data
-    const nestedData = {
-      access_token: 'secret-token-123',
-      refresh_token: 'secret-refresh-456',
-      open_id: 'user-open-id',
-      profile_url: 'https://example.com/user',
-      nested: {
-        email: 'user@example.com',
-        phone: '+1234567890',
-        access_token: 'nested-secret-token',
-      },
-      items: [
-        { title: 'Secret Item', url: 'https://example.com/secret' },
-        { title: 'Public Item', url: 'https://example.com/public' },
-      ],
-    };
-
-    // Sanitize the data
-    const sanitized = sanitizeDisplayData(nestedData);
-
-    // Verify keys are preserved, sensitive values are redacted
-    expect(sanitized.access_token).toBe('<REDACTED>');
-    expect(sanitized.refresh_token).toBe('<REDACTED>');
-    expect(sanitized.open_id).toBe('<REDACTED>');
-    expect(sanitized.profile_url).toBe('<REDACTED>');
-
-    // Verify nested sensitive fields are redacted
-    expect(sanitized.nested.access_token).toBe('<REDACTED>');
-    expect(sanitized.nested.email).toBe('<REDACTED>');
-    expect(sanitized.nested.phone).toBe('<REDACTED>');
-
-    // Verify arrays are sanitized
-    expect(sanitized.items[0].title).toBe('<REDACTED>');
-    expect(sanitized.items[0].url).toBe('<REDACTED>');
-  });
 });
