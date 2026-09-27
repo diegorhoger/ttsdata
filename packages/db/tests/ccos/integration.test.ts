@@ -207,16 +207,20 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
       name: 'Race Sample',
     });
     await repository.updateProduct(workspaceA, product.id, { status: 'selected' });
+    await repository.updateProduct(workspaceA, product.id, { status: 'sample_requested' });
+    await repository.updateProduct(workspaceA, product.id, { status: 'sample_approved' });
+    await repository.updateProduct(workspaceA, product.id, { status: 'shipped' });
+    await repository.updateProduct(workspaceA, product.id, { status: 'received' });
 
     const outcomes = await Promise.allSettled([
-      repository.updateProduct(workspaceA, product.id, { status: 'sample_requested' }),
-      repository.updateProduct(workspaceA, product.id, { status: 'declined' }),
+      repository.updateProduct(workspaceA, product.id, { status: 'content_queue' }),
+      repository.updateProduct(workspaceA, product.id, { status: 'replacement_needed' }),
     ]);
 
     expect(outcomes.filter(({ status }) => status === 'fulfilled')).toHaveLength(1);
     expect(outcomes.filter(({ status }) => status === 'rejected')).toHaveLength(1);
     const persisted = await repository.getProduct(workspaceA, product.id);
-    expect(['sample_requested', 'declined']).toContain(persisted?.status);
+    expect(['content_queue', 'replacement_needed']).toContain(persisted?.status);
 
     const events = await pool.query<{ count: string }>(
       `SELECT COUNT(*)::text AS count FROM ccos_interactions
@@ -224,7 +228,7 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
           AND direction = 'system' AND channel = 'product_lifecycle'`,
       [workspaceA, partnership.id],
     );
-    expect(events.rows[0].count).toBe('2');
+    expect(events.rows[0].count).toBe('6');
   });
 
   it('rejects assigning an action to a user from another workspace', async () => {
