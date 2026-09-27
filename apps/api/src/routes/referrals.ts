@@ -9,7 +9,7 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { eq, and, desc, sql } from 'drizzle-orm';
 import { db } from '../lib/db';
-import { requireAuth } from '../lib/auth';
+import { requireAuth, requireRoles } from '../lib/auth';
 import { AppError } from '../lib/errors';
 
 // In-memory store for MVP — would be a database table in production
@@ -86,7 +86,7 @@ export async function registerReferralRoutes(app: FastifyInstance) {
   });
 
   // POST /api/referrals/reward — Mark a referral as rewarded (admin only)
-  app.post('/reward', { preHandler: requireAuth }, async (request, reply) => {
+  app.post('/reward', { preHandler: requireRoles('admin', 'owner') }, async (request, reply) => {
     const auth = request.auth!;
     const { referralId } = z.object({ referralId: z.string() }).parse(request.body);
 
