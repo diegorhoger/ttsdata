@@ -112,6 +112,121 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
     expect(outcomes.filter(({ status }) => status === 'rejected')).toHaveLength(1);
   });
 
+  it('keeps product records tenant-scoped and rejects cross-workspace attachment', async () => {
+    const store = await repository.createStore({ workspaceId: workspaceA, name: 'Product Store' });
+    const partnership = await repository.createPartnership({
+      workspaceId: workspaceA,
+      storeId: store.id,
+      type: 'affiliate',
+    });
+    const product = await repository.createProduct({
+      workspaceId: workspaceA,
+      partnershipId: partnership.id,
+      name: 'Observed Sample',
+      priceAmount: '49.900000',
+      currency: 'BRL',
+      commissionRate: '0.150000',
+    });
+
+    await expect(repository.getProduct(workspaceB, product.id)).resolves.toBeNull();
+    await expect(repository.updateProduct(workspaceB, product.id, { status: 'selected' })).resolves.toBeNull();
+    await expect(repository.listProducts(workspaceB, partnership.id)).resolves.toEqual([]);
+    await expect(repository.createProduct({
+      workspaceId: workspaceB,
+      partnershipId: partnership.id,
+      name: 'Cross-tenant sample',
+    })).rejects.toMatchObject({ code: '23503' });
+  });
+
+  it('persists explicit product transitions and auditable timeline events without fabricating fields', async () => {
+    const store = await repository.createStore({ workspaceId: workspaceA, name: 'Logistics Store' });
+    const partnership = await repository.createPartnership({
+      workspaceId: workspaceA,
+      storeId: store.id,
+      type: 'gifting',
+    });
+    const product = await repository.createProduct({
+      workspaceId: workspaceA,
+      partnershipId: partnership.id,
+      name: 'Gifted Sample',
+    });
+
+    expect(product).toMatchObject({
+      status: 'proposed',
+      priceAmount: null,
+      commissionRate: null,
+      trackingCode: null,
+      shippedAt: null,
+      receivedAt: null,
+    });
+    await expect(repository.updateProduct(workspaceA, product.id, { status: 'content_live' })).rejects.toThrow(
+      'Invalid CCOS product transition: proposed -> content_live',
+    );
+
+    await repository.updateProduct(workspaceA, product.id, { status: 'selected' });
+    await repository.updateProduct(workspaceA, product.id, { status: 'sample_requested' });
+    await repository.updateProduct(workspaceA, product.id, { status: 'sample_approved' });
+    await repository.updateProduct(workspaceA, product.id, {
+      status: 'shipped',
+      trackingCode: 'TRACK-123',
+      shippedAt: new Date('2026-09-27T12:00:00.000Z'),
+    });
+    const received = await repository.updateProduct(workspaceA, product.id, {
+      status: 'received',
+      receivedAt: new Date('2026-09-29T12:00:00.000Z'),
+    });
+    expect(received).toMatchObject({ status: 'received', trackingCode: 'TRACK-123' });
+    expect(received?.receivedAt?.toISOString()).toBe('2026-09-29T12:00:00.000Z');
+
+    const events = await pool.query<{ summary: string }>(
+      `SELECT summary FROM ccos_interactions
+        WHERE workspace_id = $1 AND partnership_id = $2
+          AND direction = 'system' AND channel = 'product_lifecycle'
+        ORDER BY occurred_at`,
+      [workspaceA, partnership.id],
+    );
+    expect(events.rows.map(({ summary }) => summary)).toEqual([
+      'Product lifecycle changed: proposed -> selected',
+      'Product lifecycle changed: selected -> sample_requested',
+      'Product lifecycle changed: sample_requested -> sample_approved',
+      'Product lifecycle changed: sample_approved -> shipped',
+      'Product lifecycle changed: shipped -> received',
+    ]);
+  });
+
+  it('serializes competing product transitions and emits only the committed event', async () => {
+    const store = await repository.createStore({ workspaceId: workspaceA, name: 'Product Race Store' });
+    const partnership = await repository.createPartnership({
+      workspaceId: workspaceA,
+      storeId: store.id,
+      type: 'paid_campaign',
+    });
+    const product = await repository.createProduct({
+      workspaceId: workspaceA,
+      partnershipId: partnership.id,
+      name: 'Race Sample',
+    });
+    await repository.updateProduct(workspaceA, product.id, { status: 'selected' });
+
+    const outcomes = await Promise.allSettled([
+      repository.updateProduct(workspaceA, product.id, { status: 'sample_requested' }),
+      repository.updateProduct(workspaceA, product.id, { status: 'declined' }),
+    ]);
+
+    expect(outcomes.filter(({ status }) => status === 'fulfilled')).toHaveLength(1);
+    expect(outcomes.filter(({ status }) => status === 'rejected')).toHaveLength(1);
+    const persisted = await repository.getProduct(workspaceA, product.id);
+    expect(['sample_requested', 'declined']).toContain(persisted?.status);
+
+    const events = await pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM ccos_interactions
+        WHERE workspace_id = $1 AND partnership_id = $2
+          AND direction = 'system' AND channel = 'product_lifecycle'`,
+      [workspaceA, partnership.id],
+    );
+    expect(events.rows[0].count).toBe('2');
+  });
+
   it('rejects assigning an action to a user from another workspace', async () => {
     const store = await repository.createStore({ workspaceId: workspaceA, name: 'Action Store' });
     const user = await pool.query<{ id: string }>(

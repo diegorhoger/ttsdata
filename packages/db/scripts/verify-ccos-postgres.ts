@@ -84,7 +84,10 @@ if (!parsedUrl.pathname.slice(1).endsWith('_test')) {
 
 const packageRoot = resolve(process.cwd());
 const migrationsFolder = resolve(packageRoot, 'drizzle');
-const rollbackPath = resolve(migrationsFolder, 'rollback/0002_worried_lyja.down.sql');
+const rollbackPaths = [
+  resolve(migrationsFolder, 'rollback/0003_silly_otto_octavius.down.sql'),
+  resolve(migrationsFolder, 'rollback/0002_worried_lyja.down.sql'),
+] as const;
 const journalPath = resolve(migrationsFolder, 'meta/_journal.json');
 const pool = new Pool({ connectionString: TEST_DATABASE_URL });
 const database = drizzle(pool);
@@ -114,15 +117,16 @@ async function runConstraintTests(): Promise<void> {
   });
 }
 
-async function getMigrationCreatedAt(): Promise<number> {
+async function getMigrationCreatedAt(): Promise<number[]> {
   const journal = JSON.parse(await readFile(journalPath, 'utf8')) as {
     entries?: Array<{ tag?: string; when?: number }>;
   };
-  const entry = journal.entries?.find(({ tag }) => tag === '0002_worried_lyja');
-  if (!entry || typeof entry.when !== 'number') {
-    throw new Error('Migration journal is missing 0002_worried_lyja');
+  const tags = ['0002_worried_lyja', '0003_silly_otto_octavius'];
+  const entries = tags.map((tag) => journal.entries?.find((entry) => entry.tag === tag));
+  if (entries.some((entry) => !entry || typeof entry.when !== 'number')) {
+    throw new Error('Migration journal is missing a CCOS migration entry');
   }
-  return entry.when;
+  return entries.map((entry) => entry!.when!);
 }
 
 async function assertForwardSchema(): Promise<void> {
@@ -148,6 +152,16 @@ async function assertForwardSchema(): Promise<void> {
   );
   if (constraints.rowCount !== 2) {
     throw new Error(`Expected both exactly-one-target constraints, found ${constraints.rowCount ?? 0}`);
+  }
+
+  const productColumns = await pool.query<{ column_name: string }>(
+    `SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'ccos_products'
+        AND column_name = ANY($1::text[])`,
+    [['price_amount', 'currency', 'commission_rate', 'commission_amount', 'stock_state']],
+  );
+  if (productColumns.rowCount !== 5) {
+    throw new Error(`Expected five product commercial/logistics columns, found ${productColumns.rowCount ?? 0}`);
   }
 
   const foreignKeys = await pool.query<{
@@ -230,18 +244,18 @@ async function main(): Promise<void> {
   await runConstraintTests();
 
   console.log('3/4 Applying reviewed rollback and checking removal...');
-  const rollbackSql = await readFile(rollbackPath, 'utf8');
+  const rollbackSql = (await Promise.all(rollbackPaths.map((path) => readFile(path, 'utf8')))).join('\n');
   const migrationCreatedAt = await getMigrationCreatedAt();
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     await client.query(rollbackSql);
     const deleted = await client.query(
-      'DELETE FROM drizzle.__drizzle_migrations WHERE created_at = $1 RETURNING id',
+      'DELETE FROM drizzle.__drizzle_migrations WHERE created_at = ANY($1::bigint[]) RETURNING id',
       [migrationCreatedAt],
     );
-    if (deleted.rowCount !== 1) {
-      throw new Error(`Expected one CCOS migration journal row, removed ${deleted.rowCount ?? 0}`);
+    if (deleted.rowCount !== 2) {
+      throw new Error(`Expected two CCOS migration journal rows, removed ${deleted.rowCount ?? 0}`);
     }
     await client.query('COMMIT');
   } catch (error) {

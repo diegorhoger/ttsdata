@@ -1,5 +1,10 @@
 import { Pool } from 'pg';
-import { assertPartnershipTransition, type PartnershipStatus } from '../ccos/lifecycle';
+import {
+  assertPartnershipTransition,
+  assertProductTransition,
+  type PartnershipStatus,
+  type ProductStatus,
+} from '../ccos/lifecycle';
 
 export type PartnershipType = 'inbound_invite' | 'outbound_prospecting' | 'affiliate' | 'paid_campaign' | 'gifting';
 export type CCOSPriority = 'low' | 'normal' | 'high' | 'urgent';
@@ -38,6 +43,42 @@ export interface UpdateCCOSPartnershipInput {
   status?: PartnershipStatus;
 }
 
+export interface CreateCCOSProductInput {
+  workspaceId: string;
+  partnershipId: string;
+  name: string;
+  sku?: string;
+  productUrl?: string;
+  priceAmount?: string;
+  currency?: string;
+  commissionRate?: string;
+  commissionAmount?: string;
+  stockState?: string;
+  trackingCode?: string;
+  shippedAt?: Date;
+  receivedAt?: Date;
+  priority?: CCOSPriority;
+  source?: string;
+  provenance?: unknown;
+}
+
+export interface UpdateCCOSProductInput {
+  name?: string;
+  sku?: string | null;
+  productUrl?: string | null;
+  priceAmount?: string | null;
+  currency?: string | null;
+  commissionRate?: string | null;
+  commissionAmount?: string | null;
+  stockState?: string | null;
+  trackingCode?: string | null;
+  shippedAt?: Date | null;
+  receivedAt?: Date | null;
+  priority?: CCOSPriority;
+  status?: ProductStatus;
+  provenance?: unknown;
+}
+
 export interface CCOSStoreRecord {
   id: string;
   workspaceId: string;
@@ -63,6 +104,29 @@ export interface CCOSPartnershipRecord {
   updatedAt: Date;
 }
 
+export interface CCOSProductRecord {
+  id: string;
+  workspaceId: string;
+  partnershipId: string;
+  name: string;
+  sku: string | null;
+  productUrl: string | null;
+  priceAmount: string | null;
+  currency: string | null;
+  commissionRate: string | null;
+  commissionAmount: string | null;
+  stockState: string | null;
+  status: ProductStatus;
+  trackingCode: string | null;
+  shippedAt: Date | null;
+  receivedAt: Date | null;
+  priority: CCOSPriority;
+  source: string;
+  provenance: unknown;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 type StoreRow = {
   id: string; workspace_id: string; name: string; contact_name: string | null;
   contact_email: string | null; notes: string | null; created_at: Date; updated_at: Date;
@@ -72,10 +136,20 @@ type PartnershipRow = {
   status: PartnershipStatus; title: string | null; terms: string | null; priority: CCOSPriority;
   last_contact_at: Date | null; created_at: Date; updated_at: Date;
 };
+type ProductRow = {
+  id: string; workspace_id: string; partnership_id: string; name: string; sku: string | null;
+  product_url: string | null; price_amount: string | null; currency: string | null;
+  commission_rate: string | null; commission_amount: string | null; stock_state: string | null;
+  status: ProductStatus; tracking_code: string | null; shipped_at: Date | null; received_at: Date | null;
+  priority: CCOSPriority; source: string; provenance: unknown; created_at: Date; updated_at: Date;
+};
 
 const STORE_COLUMNS = 'id, workspace_id, name, contact_name, contact_email, notes, created_at, updated_at';
 const PARTNERSHIP_COLUMNS = `id, workspace_id, store_id, type, status, title, terms, priority,
   last_contact_at, created_at, updated_at`;
+const PRODUCT_COLUMNS = `id, workspace_id, partnership_id, name, sku, product_url, price_amount, currency,
+  commission_rate, commission_amount, stock_state, status, tracking_code, shipped_at, received_at,
+  priority, source, provenance, created_at, updated_at`;
 
 function mapStore(row: StoreRow): CCOSStoreRecord {
   return { id: row.id, workspaceId: row.workspace_id, name: row.name, contactName: row.contact_name,
@@ -86,6 +160,17 @@ function mapPartnership(row: PartnershipRow): CCOSPartnershipRecord {
   return { id: row.id, workspaceId: row.workspace_id, storeId: row.store_id, type: row.type,
     status: row.status, title: row.title, terms: row.terms, priority: row.priority,
     lastContactAt: row.last_contact_at, createdAt: row.created_at, updatedAt: row.updated_at };
+}
+
+function mapProduct(row: ProductRow): CCOSProductRecord {
+  return {
+    id: row.id, workspaceId: row.workspace_id, partnershipId: row.partnership_id, name: row.name,
+    sku: row.sku, productUrl: row.product_url, priceAmount: row.price_amount, currency: row.currency,
+    commissionRate: row.commission_rate, commissionAmount: row.commission_amount, stockState: row.stock_state,
+    status: row.status, trackingCode: row.tracking_code, shippedAt: row.shipped_at,
+    receivedAt: row.received_at, priority: row.priority, source: row.source,
+    provenance: row.provenance, createdAt: row.created_at, updatedAt: row.updated_at,
+  };
 }
 
 export class CCOSRepository {
@@ -215,6 +300,106 @@ export class CCOSRepository {
       );
       await client.query('COMMIT');
       return result.rows[0] ? mapPartnership(result.rows[0]) : null;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async createProduct(input: CreateCCOSProductInput): Promise<CCOSProductRecord> {
+    const result = await this.pool.query<ProductRow>(
+      `INSERT INTO ccos_products
+       (workspace_id, partnership_id, name, sku, product_url, price_amount, currency, commission_rate,
+        commission_amount, stock_state, tracking_code, shipped_at, received_at, priority, source, provenance)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+       RETURNING ${PRODUCT_COLUMNS}`,
+      [input.workspaceId, input.partnershipId, input.name, input.sku ?? null, input.productUrl ?? null,
+        input.priceAmount ?? null, input.currency ?? null, input.commissionRate ?? null,
+        input.commissionAmount ?? null, input.stockState ?? null, input.trackingCode ?? null,
+        input.shippedAt ?? null, input.receivedAt ?? null, input.priority ?? 'normal',
+        input.source ?? 'manual', input.provenance ?? null],
+    );
+    if (result.rowCount !== 1) throw new Error('CCOS product insert did not return exactly one row');
+    return mapProduct(result.rows[0]);
+  }
+
+  async listProducts(workspaceId: string, partnershipId?: string): Promise<CCOSProductRecord[]> {
+    const values: unknown[] = [workspaceId];
+    const partnershipPredicate = partnershipId === undefined ? '' : ' AND partnership_id = $2';
+    if (partnershipId !== undefined) values.push(partnershipId);
+    const result = await this.pool.query<ProductRow>(
+      `SELECT ${PRODUCT_COLUMNS} FROM ccos_products WHERE workspace_id = $1${partnershipPredicate}
+       ORDER BY updated_at DESC, created_at DESC`, values,
+    );
+    return result.rows.map(mapProduct);
+  }
+
+  async getProduct(workspaceId: string, productId: string): Promise<CCOSProductRecord | null> {
+    const result = await this.pool.query<ProductRow>(
+      `SELECT ${PRODUCT_COLUMNS} FROM ccos_products WHERE workspace_id = $1 AND id = $2`,
+      [workspaceId, productId],
+    );
+    return result.rows[0] ? mapProduct(result.rows[0]) : null;
+  }
+
+  async updateProduct(
+    workspaceId: string, productId: string, input: UpdateCCOSProductInput,
+  ): Promise<CCOSProductRecord | null> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const selected = await client.query<ProductRow>(
+        `SELECT ${PRODUCT_COLUMNS} FROM ccos_products
+         WHERE workspace_id = $1 AND id = $2 FOR UPDATE`, [workspaceId, productId],
+      );
+      const current = selected.rows[0] ? mapProduct(selected.rows[0]) : null;
+      if (!current) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+      const statusChanged = input.status !== undefined && input.status !== current.status;
+      if (statusChanged) assertProductTransition(current.status, input.status!);
+
+      const updates: string[] = [];
+      const values: unknown[] = [workspaceId, productId];
+      const add = (column: string, value: unknown) => {
+        values.push(value);
+        updates.push(`${column} = $${values.length}`);
+      };
+      if (input.name !== undefined) add('name', input.name);
+      if (input.sku !== undefined) add('sku', input.sku);
+      if (input.productUrl !== undefined) add('product_url', input.productUrl);
+      if (input.priceAmount !== undefined) add('price_amount', input.priceAmount);
+      if (input.currency !== undefined) add('currency', input.currency);
+      if (input.commissionRate !== undefined) add('commission_rate', input.commissionRate);
+      if (input.commissionAmount !== undefined) add('commission_amount', input.commissionAmount);
+      if (input.stockState !== undefined) add('stock_state', input.stockState);
+      if (input.status !== undefined) add('status', input.status);
+      if (input.trackingCode !== undefined) add('tracking_code', input.trackingCode);
+      if (input.shippedAt !== undefined) add('shipped_at', input.shippedAt);
+      if (input.receivedAt !== undefined) add('received_at', input.receivedAt);
+      if (input.priority !== undefined) add('priority', input.priority);
+      if (input.provenance !== undefined) add('provenance', input.provenance);
+      if (updates.length === 0) {
+        await client.query('COMMIT');
+        return current;
+      }
+      const result = await client.query<ProductRow>(
+        `UPDATE ccos_products SET ${updates.join(', ')}, updated_at = NOW()
+         WHERE workspace_id = $1 AND id = $2 RETURNING ${PRODUCT_COLUMNS}`, values,
+      );
+      if (statusChanged) {
+        await client.query(
+          `INSERT INTO ccos_interactions
+           (workspace_id, partnership_id, direction, channel, summary, occurred_at, source)
+           VALUES ($1, $2, 'system', 'product_lifecycle', $3, NOW(), 'system')`,
+          [workspaceId, current.partnershipId, `Product lifecycle changed: ${current.status} -> ${input.status}`],
+        );
+      }
+      await client.query('COMMIT');
+      return result.rows[0] ? mapProduct(result.rows[0]) : null;
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
