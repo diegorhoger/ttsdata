@@ -162,14 +162,14 @@ async function assertForwardSchema(): Promise<void> {
     `SELECT c.conname AS name,
             source.relname AS source_table,
             ARRAY(
-              SELECT a.attname
+              SELECT a.attname::text
                 FROM unnest(c.conkey) WITH ORDINALITY AS keys(attnum, position)
                 JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = keys.attnum
                ORDER BY keys.position
             ) AS source_columns,
             target.relname AS target_table,
             ARRAY(
-              SELECT a.attname
+              SELECT a.attname::text
                 FROM unnest(c.confkey) WITH ORDINALITY AS keys(attnum, position)
                 JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = keys.attnum
                ORDER BY keys.position
