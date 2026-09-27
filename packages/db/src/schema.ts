@@ -527,7 +527,7 @@ export const ccosMetricSnapshots = pgTable('ccos_metric_snapshots', {
   classification: metricClassificationEnum('classification').notNull(),
   observedAt: timestamp('observed_at', { withTimezone: true }).notNull(),
   source: varchar('source', { length: 64 }).notNull(),
-  provenance: jsonb('provenance').notNull(),
+  provenance: jsonb('provenance').notNull().default(sql`'{}'::jsonb`),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   workspaceMetricTimeIdx: index('ccos_metric_snapshots_metric_time_idx')
