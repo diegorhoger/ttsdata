@@ -61,6 +61,7 @@ const CONTENT_TRANSITIONS: Readonly<Record<ContentStatus, readonly ContentStatus
   published: ['ads_authorized', 'monitoring'],
   ads_authorized: ['monitoring'],
   monitoring: ['completed'],
+  completed: [],
 };
 
 export function canTransitionProduct(from: ProductStatus, to: ProductStatus): boolean {
