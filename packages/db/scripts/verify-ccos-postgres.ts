@@ -15,30 +15,63 @@ const CCOS_TABLES = [
   'ccos_next_actions',
   'ccos_metric_snapshots',
 ] as const;
-const CCOS_FOREIGN_KEYS = [
-  'ccos_contents_workspace_id_workspaces_id_fk',
-  'ccos_contents_workspace_product_fk',
-  'ccos_interactions_workspace_id_workspaces_id_fk',
-  'ccos_interactions_workspace_partnership_fk',
-  'ccos_metric_snapshots_workspace_id_workspaces_id_fk',
-  'ccos_metric_snapshots_workspace_store_fk',
-  'ccos_metric_snapshots_workspace_partnership_fk',
-  'ccos_metric_snapshots_workspace_product_fk',
-  'ccos_metric_snapshots_workspace_content_fk',
-  'ccos_metric_snapshots_workspace_interaction_fk',
-  'ccos_next_actions_workspace_id_workspaces_id_fk',
-  'ccos_next_actions_workspace_owner_fk',
-  'ccos_next_actions_workspace_store_fk',
-  'ccos_next_actions_workspace_partnership_fk',
-  'ccos_next_actions_workspace_product_fk',
-  'ccos_next_actions_workspace_content_fk',
-  'ccos_next_actions_workspace_interaction_fk',
-  'ccos_partnerships_workspace_id_workspaces_id_fk',
-  'ccos_partnerships_workspace_store_fk',
-  'ccos_products_workspace_id_workspaces_id_fk',
-  'ccos_products_workspace_partnership_fk',
-  'ccos_stores_workspace_id_workspaces_id_fk',
-] as const;
+type ForeignKeyExpectation = {
+  name: string;
+  sourceTable: string;
+  sourceColumns: string[];
+  targetTable: string;
+  targetColumns: string[];
+  deleteAction: 'c' | 'r';
+};
+
+const workspaceForeignKey = (sourceTable: string): ForeignKeyExpectation => ({
+  name: `${sourceTable}_workspace_id_workspaces_id_fk`,
+  sourceTable,
+  sourceColumns: ['workspace_id'],
+  targetTable: 'workspaces',
+  targetColumns: ['id'],
+  deleteAction: 'c',
+});
+
+const tenantForeignKey = (
+  name: string,
+  sourceTable: string,
+  targetColumn: string,
+  targetTable: string,
+  deleteAction: 'c' | 'r' = 'c',
+): ForeignKeyExpectation => ({
+  name,
+  sourceTable,
+  sourceColumns: ['workspace_id', targetColumn],
+  targetTable,
+  targetColumns: ['workspace_id', 'id'],
+  deleteAction,
+});
+
+const CCOS_FOREIGN_KEYS: ForeignKeyExpectation[] = [
+  workspaceForeignKey('ccos_contents'),
+  tenantForeignKey('ccos_contents_workspace_product_fk', 'ccos_contents', 'product_id', 'ccos_products'),
+  workspaceForeignKey('ccos_interactions'),
+  tenantForeignKey('ccos_interactions_workspace_partnership_fk', 'ccos_interactions', 'partnership_id', 'ccos_partnerships'),
+  workspaceForeignKey('ccos_metric_snapshots'),
+  tenantForeignKey('ccos_metric_snapshots_workspace_store_fk', 'ccos_metric_snapshots', 'store_id', 'ccos_stores'),
+  tenantForeignKey('ccos_metric_snapshots_workspace_partnership_fk', 'ccos_metric_snapshots', 'partnership_id', 'ccos_partnerships'),
+  tenantForeignKey('ccos_metric_snapshots_workspace_product_fk', 'ccos_metric_snapshots', 'product_id', 'ccos_products'),
+  tenantForeignKey('ccos_metric_snapshots_workspace_content_fk', 'ccos_metric_snapshots', 'content_id', 'ccos_contents'),
+  tenantForeignKey('ccos_metric_snapshots_workspace_interaction_fk', 'ccos_metric_snapshots', 'interaction_id', 'ccos_interactions'),
+  workspaceForeignKey('ccos_next_actions'),
+  tenantForeignKey('ccos_next_actions_workspace_owner_fk', 'ccos_next_actions', 'owner_user_id', 'users', 'r'),
+  tenantForeignKey('ccos_next_actions_workspace_store_fk', 'ccos_next_actions', 'store_id', 'ccos_stores'),
+  tenantForeignKey('ccos_next_actions_workspace_partnership_fk', 'ccos_next_actions', 'partnership_id', 'ccos_partnerships'),
+  tenantForeignKey('ccos_next_actions_workspace_product_fk', 'ccos_next_actions', 'product_id', 'ccos_products'),
+  tenantForeignKey('ccos_next_actions_workspace_content_fk', 'ccos_next_actions', 'content_id', 'ccos_contents'),
+  tenantForeignKey('ccos_next_actions_workspace_interaction_fk', 'ccos_next_actions', 'interaction_id', 'ccos_interactions'),
+  workspaceForeignKey('ccos_partnerships'),
+  tenantForeignKey('ccos_partnerships_workspace_store_fk', 'ccos_partnerships', 'store_id', 'ccos_stores'),
+  workspaceForeignKey('ccos_products'),
+  tenantForeignKey('ccos_products_workspace_partnership_fk', 'ccos_products', 'partnership_id', 'ccos_partnerships'),
+  workspaceForeignKey('ccos_stores'),
+];
 
 if (!TEST_DATABASE_URL) {
   throw new Error('CCOS PostgreSQL verification requires TEST_DATABASE_URL');
@@ -117,17 +150,54 @@ async function assertForwardSchema(): Promise<void> {
     throw new Error(`Expected both exactly-one-target constraints, found ${constraints.rowCount ?? 0}`);
   }
 
-  const foreignKeys = await pool.query<{ conname: string }>(
-    `SELECT conname
-       FROM pg_constraint
-      WHERE contype = 'f' AND conname = ANY($1::text[])
-      ORDER BY conname`,
-    [CCOS_FOREIGN_KEYS],
+  const foreignKeys = await pool.query<{
+    name: string;
+    source_table: string;
+    source_columns: string[];
+    target_table: string;
+    target_columns: string[];
+    delete_action: string;
+    validated: boolean;
+  }>(
+    `SELECT c.conname AS name,
+            source.relname AS source_table,
+            ARRAY(
+              SELECT a.attname
+                FROM unnest(c.conkey) WITH ORDINALITY AS keys(attnum, position)
+                JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = keys.attnum
+               ORDER BY keys.position
+            ) AS source_columns,
+            target.relname AS target_table,
+            ARRAY(
+              SELECT a.attname
+                FROM unnest(c.confkey) WITH ORDINALITY AS keys(attnum, position)
+                JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = keys.attnum
+               ORDER BY keys.position
+            ) AS target_columns,
+            c.confdeltype AS delete_action,
+            c.convalidated AS validated
+       FROM pg_constraint c
+       JOIN pg_class source ON source.oid = c.conrelid
+       JOIN pg_class target ON target.oid = c.confrelid
+      WHERE c.contype = 'f' AND c.conname = ANY($1::text[])
+      ORDER BY c.conname`,
+    [CCOS_FOREIGN_KEYS.map(({ name }) => name)],
   );
-  const actualForeignKeys = new Set(foreignKeys.rows.map(({ conname }) => conname));
-  const missingForeignKeys = CCOS_FOREIGN_KEYS.filter((name) => !actualForeignKeys.has(name));
-  if (missingForeignKeys.length > 0) {
-    throw new Error(`Missing CCOS tenant foreign keys: ${missingForeignKeys.join(', ')}`);
+  const actualForeignKeys = new Map(foreignKeys.rows.map((row) => [row.name, row]));
+  for (const expected of CCOS_FOREIGN_KEYS) {
+    const actual = actualForeignKeys.get(expected.name);
+    if (!actual) {
+      throw new Error(`Missing CCOS tenant foreign key: ${expected.name}`);
+    }
+    const matches = actual.source_table === expected.sourceTable
+      && JSON.stringify(actual.source_columns) === JSON.stringify(expected.sourceColumns)
+      && actual.target_table === expected.targetTable
+      && JSON.stringify(actual.target_columns) === JSON.stringify(expected.targetColumns)
+      && actual.delete_action === expected.deleteAction
+      && actual.validated;
+    if (!matches) {
+      throw new Error(`Incorrect CCOS tenant foreign key definition: ${expected.name}`);
+    }
   }
 }
 
