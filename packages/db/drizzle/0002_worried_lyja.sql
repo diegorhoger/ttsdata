@@ -5,12 +5,6 @@ EXCEPTION
 END $$;
 --> statement-breakpoint
 DO $$ BEGIN
- CREATE TYPE "public"."ccos_entity_type" AS ENUM('store', 'partnership', 'product', 'content', 'interaction');
-EXCEPTION
- WHEN duplicate_object THEN null;
-END $$;
---> statement-breakpoint
-DO $$ BEGIN
  CREATE TYPE "public"."ccos_interaction_direction" AS ENUM('inbound', 'outbound', 'system');
 EXCEPTION
  WHEN duplicate_object THEN null;
@@ -76,8 +70,11 @@ CREATE TABLE IF NOT EXISTS "ccos_interactions" (
 CREATE TABLE IF NOT EXISTS "ccos_metric_snapshots" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"workspace_id" uuid NOT NULL,
-	"entity_type" "ccos_entity_type" NOT NULL,
-	"entity_id" uuid NOT NULL,
+	"store_id" uuid,
+	"partnership_id" uuid,
+	"product_id" uuid,
+	"content_id" uuid,
+	"interaction_id" uuid,
 	"metric_key" varchar(128) NOT NULL,
 	"numeric_value" numeric(20, 6),
 	"text_value" text,
@@ -92,8 +89,11 @@ CREATE TABLE IF NOT EXISTS "ccos_metric_snapshots" (
 CREATE TABLE IF NOT EXISTS "ccos_next_actions" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"workspace_id" uuid NOT NULL,
-	"entity_type" "ccos_entity_type" NOT NULL,
-	"entity_id" uuid NOT NULL,
+	"store_id" uuid,
+	"partnership_id" uuid,
+	"product_id" uuid,
+	"content_id" uuid,
+	"interaction_id" uuid,
 	"title" varchar(255) NOT NULL,
 	"status" "ccos_next_action_status" DEFAULT 'open' NOT NULL,
 	"priority" "ccos_priority" DEFAULT 'normal' NOT NULL,
@@ -148,6 +148,26 @@ CREATE TABLE IF NOT EXISTS "ccos_stores" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "ccos_contents_workspace_id_id_idx" ON "ccos_contents" USING btree ("workspace_id","id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "ccos_interactions_workspace_id_id_idx" ON "ccos_interactions" USING btree ("workspace_id","id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "ccos_partnerships_workspace_id_id_idx" ON "ccos_partnerships" USING btree ("workspace_id","id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "ccos_products_workspace_id_id_idx" ON "ccos_products" USING btree ("workspace_id","id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "ccos_stores_workspace_id_id_idx" ON "ccos_stores" USING btree ("workspace_id","id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "users_workspace_id_id_idx" ON "users" USING btree ("workspace_id","id");--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "ccos_next_actions" ADD CONSTRAINT "ccos_next_actions_exactly_one_target"
+ CHECK (num_nonnulls("store_id", "partnership_id", "product_id", "content_id", "interaction_id") = 1);
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "ccos_metric_snapshots" ADD CONSTRAINT "ccos_metric_snapshots_exactly_one_target"
+ CHECK (num_nonnulls("store_id", "partnership_id", "product_id", "content_id", "interaction_id") = 1);
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
 DO $$ BEGIN
  ALTER TABLE "ccos_contents" ADD CONSTRAINT "ccos_contents_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE cascade ON UPDATE no action;
 EXCEPTION
@@ -179,13 +199,73 @@ EXCEPTION
 END $$;
 --> statement-breakpoint
 DO $$ BEGIN
+ ALTER TABLE "ccos_metric_snapshots" ADD CONSTRAINT "ccos_metric_snapshots_workspace_store_fk" FOREIGN KEY ("workspace_id","store_id") REFERENCES "public"."ccos_stores"("workspace_id","id") ON DELETE cascade ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "ccos_metric_snapshots" ADD CONSTRAINT "ccos_metric_snapshots_workspace_partnership_fk" FOREIGN KEY ("workspace_id","partnership_id") REFERENCES "public"."ccos_partnerships"("workspace_id","id") ON DELETE cascade ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "ccos_metric_snapshots" ADD CONSTRAINT "ccos_metric_snapshots_workspace_product_fk" FOREIGN KEY ("workspace_id","product_id") REFERENCES "public"."ccos_products"("workspace_id","id") ON DELETE cascade ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "ccos_metric_snapshots" ADD CONSTRAINT "ccos_metric_snapshots_workspace_content_fk" FOREIGN KEY ("workspace_id","content_id") REFERENCES "public"."ccos_contents"("workspace_id","id") ON DELETE cascade ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "ccos_metric_snapshots" ADD CONSTRAINT "ccos_metric_snapshots_workspace_interaction_fk" FOREIGN KEY ("workspace_id","interaction_id") REFERENCES "public"."ccos_interactions"("workspace_id","id") ON DELETE cascade ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
  ALTER TABLE "ccos_next_actions" ADD CONSTRAINT "ccos_next_actions_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE cascade ON UPDATE no action;
 EXCEPTION
  WHEN duplicate_object THEN null;
 END $$;
 --> statement-breakpoint
 DO $$ BEGIN
- ALTER TABLE "ccos_next_actions" ADD CONSTRAINT "ccos_next_actions_owner_user_id_users_id_fk" FOREIGN KEY ("owner_user_id") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;
+ ALTER TABLE "ccos_next_actions" ADD CONSTRAINT "ccos_next_actions_workspace_owner_fk" FOREIGN KEY ("workspace_id","owner_user_id") REFERENCES "public"."users"("workspace_id","id") ON DELETE restrict ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "ccos_next_actions" ADD CONSTRAINT "ccos_next_actions_workspace_store_fk" FOREIGN KEY ("workspace_id","store_id") REFERENCES "public"."ccos_stores"("workspace_id","id") ON DELETE cascade ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "ccos_next_actions" ADD CONSTRAINT "ccos_next_actions_workspace_partnership_fk" FOREIGN KEY ("workspace_id","partnership_id") REFERENCES "public"."ccos_partnerships"("workspace_id","id") ON DELETE cascade ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "ccos_next_actions" ADD CONSTRAINT "ccos_next_actions_workspace_product_fk" FOREIGN KEY ("workspace_id","product_id") REFERENCES "public"."ccos_products"("workspace_id","id") ON DELETE cascade ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "ccos_next_actions" ADD CONSTRAINT "ccos_next_actions_workspace_content_fk" FOREIGN KEY ("workspace_id","content_id") REFERENCES "public"."ccos_contents"("workspace_id","id") ON DELETE cascade ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "ccos_next_actions" ADD CONSTRAINT "ccos_next_actions_workspace_interaction_fk" FOREIGN KEY ("workspace_id","interaction_id") REFERENCES "public"."ccos_interactions"("workspace_id","id") ON DELETE cascade ON UPDATE no action;
 EXCEPTION
  WHEN duplicate_object THEN null;
 END $$;
@@ -220,15 +300,10 @@ EXCEPTION
  WHEN duplicate_object THEN null;
 END $$;
 --> statement-breakpoint
-CREATE UNIQUE INDEX IF NOT EXISTS "ccos_contents_workspace_id_id_idx" ON "ccos_contents" USING btree ("workspace_id","id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "ccos_contents_workspace_product_idx" ON "ccos_contents" USING btree ("workspace_id","product_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "ccos_interactions_workspace_partnership_idx" ON "ccos_interactions" USING btree ("workspace_id","partnership_id","occurred_at");--> statement-breakpoint
-CREATE INDEX IF NOT EXISTS "ccos_metric_snapshots_entity_metric_time_idx" ON "ccos_metric_snapshots" USING btree ("workspace_id","entity_type","entity_id","metric_key","observed_at");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "ccos_metric_snapshots_metric_time_idx" ON "ccos_metric_snapshots" USING btree ("workspace_id","metric_key","observed_at");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "ccos_next_actions_workspace_status_due_idx" ON "ccos_next_actions" USING btree ("workspace_id","status","due_at");--> statement-breakpoint
-CREATE INDEX IF NOT EXISTS "ccos_next_actions_workspace_entity_idx" ON "ccos_next_actions" USING btree ("workspace_id","entity_type","entity_id");--> statement-breakpoint
-CREATE UNIQUE INDEX IF NOT EXISTS "ccos_partnerships_workspace_id_id_idx" ON "ccos_partnerships" USING btree ("workspace_id","id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "ccos_partnerships_workspace_store_idx" ON "ccos_partnerships" USING btree ("workspace_id","store_id");--> statement-breakpoint
-CREATE UNIQUE INDEX IF NOT EXISTS "ccos_products_workspace_id_id_idx" ON "ccos_products" USING btree ("workspace_id","id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "ccos_products_workspace_partnership_idx" ON "ccos_products" USING btree ("workspace_id","partnership_id");--> statement-breakpoint
-CREATE UNIQUE INDEX IF NOT EXISTS "ccos_stores_workspace_id_id_idx" ON "ccos_stores" USING btree ("workspace_id","id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "ccos_stores_workspace_name_idx" ON "ccos_stores" USING btree ("workspace_id","name");

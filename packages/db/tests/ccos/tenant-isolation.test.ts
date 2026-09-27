@@ -18,7 +18,10 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
   });
 
   afterAll(async () => {
-    await pool.query('DELETE FROM workspaces WHERE id = ANY($1::uuid[])', [[workspaceA, workspaceB]]);
+    const workspaceIds = [workspaceA, workspaceB].filter(Boolean);
+    if (workspaceIds.length > 0) {
+      await pool.query('DELETE FROM workspaces WHERE id = ANY($1::uuid[])', [workspaceIds]);
+    }
     await pool.end();
   });
 
@@ -37,5 +40,52 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
       storeId: store.id,
       type: 'inbound_invite',
     })).rejects.toMatchObject({ code: '23503' });
+  });
+
+  it('rejects assigning an action to a user from another workspace', async () => {
+    const store = await repository.createStore({ workspaceId: workspaceA, name: 'Action Store' });
+    const user = await pool.query<{ id: string }>(
+      `INSERT INTO users (workspace_id, email, password_hash)
+       VALUES ($1, $2, 'test-only') RETURNING id`,
+      [workspaceB, `ccos-${Date.now()}@example.test`],
+    );
+
+    await expect(pool.query(
+      `INSERT INTO ccos_next_actions (workspace_id, store_id, title, owner_user_id)
+       VALUES ($1, $2, 'Cross-tenant owner', $3)`,
+      [workspaceA, store.id, user.rows[0].id],
+    )).rejects.toMatchObject({ code: '23503' });
+  });
+
+  it('rejects dangling, ambiguous and cross-workspace action targets', async () => {
+    const store = await repository.createStore({ workspaceId: workspaceA, name: 'Target Store' });
+
+    await expect(pool.query(
+      `INSERT INTO ccos_next_actions (workspace_id, title) VALUES ($1, 'No target')`,
+      [workspaceA],
+    )).rejects.toMatchObject({ code: '23514' });
+
+    await expect(pool.query(
+      `INSERT INTO ccos_next_actions (workspace_id, store_id, partnership_id, title)
+       VALUES ($1, $2, gen_random_uuid(), 'Two targets')`,
+      [workspaceA, store.id],
+    )).rejects.toMatchObject({ code: '23514' });
+
+    await expect(pool.query(
+      `INSERT INTO ccos_next_actions (workspace_id, store_id, title)
+       VALUES ($1, $2, 'Cross-tenant target')`,
+      [workspaceB, store.id],
+    )).rejects.toMatchObject({ code: '23503' });
+  });
+
+  it('rejects cross-workspace metric targets', async () => {
+    const store = await repository.createStore({ workspaceId: workspaceA, name: 'Metric Store' });
+
+    await expect(pool.query(
+      `INSERT INTO ccos_metric_snapshots
+       (workspace_id, store_id, metric_key, numeric_value, classification, observed_at, source, provenance)
+       VALUES ($1, $2, 'views', 1, 'observed', NOW(), 'manual', '{}'::jsonb)`,
+      [workspaceB, store.id],
+    )).rejects.toMatchObject({ code: '23503' });
   });
 });

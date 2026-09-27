@@ -6,8 +6,9 @@
 import {
   pgTable, pgEnum, uuid, varchar, text, integer, bigint,
   timestamp, boolean, jsonb, decimal, uniqueIndex, index,
-  foreignKey,
+  foreignKey, check,
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 
 // ============================================================
 // Enums
@@ -77,10 +78,6 @@ export const ccosPriorityEnum = pgEnum('ccos_priority', [
   'low', 'normal', 'high', 'urgent',
 ]);
 
-export const ccosEntityTypeEnum = pgEnum('ccos_entity_type', [
-  'store', 'partnership', 'product', 'content', 'interaction',
-]);
-
 // ============================================================
 // Auth & users
 // ============================================================
@@ -111,6 +108,7 @@ export const users = pgTable('users', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   emailIdx: uniqueIndex('users_email_idx').on(t.email),
+  workspaceIdUnique: uniqueIndex('users_workspace_id_id_idx').on(t.workspaceId, t.id),
 }));
 
 export const sessions = pgTable('sessions', {
@@ -458,6 +456,7 @@ export const ccosInteractions = pgTable('ccos_interactions', {
   source: varchar('source', { length: 64 }).notNull().default('manual'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
+  workspaceIdUnique: uniqueIndex('ccos_interactions_workspace_id_id_idx').on(t.workspaceId, t.id),
   workspacePartnershipIdx: index('ccos_interactions_workspace_partnership_idx').on(t.workspaceId, t.partnershipId, t.occurredAt),
   workspacePartnershipFk: foreignKey({
     name: 'ccos_interactions_workspace_partnership_fk',
@@ -469,27 +468,58 @@ export const ccosInteractions = pgTable('ccos_interactions', {
 export const ccosNextActions = pgTable('ccos_next_actions', {
   id: uuid('id').primaryKey().defaultRandom(),
   workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
-  entityType: ccosEntityTypeEnum('entity_type').notNull(),
-  entityId: uuid('entity_id').notNull(),
+  storeId: uuid('store_id'),
+  partnershipId: uuid('partnership_id'),
+  productId: uuid('product_id'),
+  contentId: uuid('content_id'),
+  interactionId: uuid('interaction_id'),
   title: varchar('title', { length: 255 }).notNull(),
   status: ccosNextActionStatusEnum('status').notNull().default('open'),
   priority: ccosPriorityEnum('priority').notNull().default('normal'),
   dueAt: timestamp('due_at', { withTimezone: true }),
-  ownerUserId: uuid('owner_user_id').references(() => users.id, { onDelete: 'set null' }),
+  ownerUserId: uuid('owner_user_id'),
   generatedAutomatically: boolean('generated_automatically').notNull().default(false),
   completedAt: timestamp('completed_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   workspaceStatusDueIdx: index('ccos_next_actions_workspace_status_due_idx').on(t.workspaceId, t.status, t.dueAt),
-  workspaceEntityIdx: index('ccos_next_actions_workspace_entity_idx').on(t.workspaceId, t.entityType, t.entityId),
+  exactlyOneTarget: check('ccos_next_actions_exactly_one_target', sql`num_nonnulls(${t.storeId}, ${t.partnershipId}, ${t.productId}, ${t.contentId}, ${t.interactionId}) = 1`),
+  workspaceOwnerFk: foreignKey({
+    name: 'ccos_next_actions_workspace_owner_fk',
+    columns: [t.workspaceId, t.ownerUserId],
+    foreignColumns: [users.workspaceId, users.id],
+  }).onDelete('restrict'),
+  workspaceStoreFk: foreignKey({
+    name: 'ccos_next_actions_workspace_store_fk', columns: [t.workspaceId, t.storeId],
+    foreignColumns: [ccosStores.workspaceId, ccosStores.id],
+  }).onDelete('cascade'),
+  workspacePartnershipFk: foreignKey({
+    name: 'ccos_next_actions_workspace_partnership_fk', columns: [t.workspaceId, t.partnershipId],
+    foreignColumns: [ccosPartnerships.workspaceId, ccosPartnerships.id],
+  }).onDelete('cascade'),
+  workspaceProductFk: foreignKey({
+    name: 'ccos_next_actions_workspace_product_fk', columns: [t.workspaceId, t.productId],
+    foreignColumns: [ccosProducts.workspaceId, ccosProducts.id],
+  }).onDelete('cascade'),
+  workspaceContentFk: foreignKey({
+    name: 'ccos_next_actions_workspace_content_fk', columns: [t.workspaceId, t.contentId],
+    foreignColumns: [ccosContents.workspaceId, ccosContents.id],
+  }).onDelete('cascade'),
+  workspaceInteractionFk: foreignKey({
+    name: 'ccos_next_actions_workspace_interaction_fk', columns: [t.workspaceId, t.interactionId],
+    foreignColumns: [ccosInteractions.workspaceId, ccosInteractions.id],
+  }).onDelete('cascade'),
 }));
 
 export const ccosMetricSnapshots = pgTable('ccos_metric_snapshots', {
   id: uuid('id').primaryKey().defaultRandom(),
   workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
-  entityType: ccosEntityTypeEnum('entity_type').notNull(),
-  entityId: uuid('entity_id').notNull(),
+  storeId: uuid('store_id'),
+  partnershipId: uuid('partnership_id'),
+  productId: uuid('product_id'),
+  contentId: uuid('content_id'),
+  interactionId: uuid('interaction_id'),
   metricKey: varchar('metric_key', { length: 128 }).notNull(),
   numericValue: decimal('numeric_value', { precision: 20, scale: 6 }),
   textValue: text('text_value'),
@@ -500,8 +530,29 @@ export const ccosMetricSnapshots = pgTable('ccos_metric_snapshots', {
   provenance: jsonb('provenance').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
-  workspaceEntityMetricTimeIdx: index('ccos_metric_snapshots_entity_metric_time_idx')
-    .on(t.workspaceId, t.entityType, t.entityId, t.metricKey, t.observedAt),
+  workspaceMetricTimeIdx: index('ccos_metric_snapshots_metric_time_idx')
+    .on(t.workspaceId, t.metricKey, t.observedAt),
+  exactlyOneTarget: check('ccos_metric_snapshots_exactly_one_target', sql`num_nonnulls(${t.storeId}, ${t.partnershipId}, ${t.productId}, ${t.contentId}, ${t.interactionId}) = 1`),
+  workspaceStoreFk: foreignKey({
+    name: 'ccos_metric_snapshots_workspace_store_fk', columns: [t.workspaceId, t.storeId],
+    foreignColumns: [ccosStores.workspaceId, ccosStores.id],
+  }).onDelete('cascade'),
+  workspacePartnershipFk: foreignKey({
+    name: 'ccos_metric_snapshots_workspace_partnership_fk', columns: [t.workspaceId, t.partnershipId],
+    foreignColumns: [ccosPartnerships.workspaceId, ccosPartnerships.id],
+  }).onDelete('cascade'),
+  workspaceProductFk: foreignKey({
+    name: 'ccos_metric_snapshots_workspace_product_fk', columns: [t.workspaceId, t.productId],
+    foreignColumns: [ccosProducts.workspaceId, ccosProducts.id],
+  }).onDelete('cascade'),
+  workspaceContentFk: foreignKey({
+    name: 'ccos_metric_snapshots_workspace_content_fk', columns: [t.workspaceId, t.contentId],
+    foreignColumns: [ccosContents.workspaceId, ccosContents.id],
+  }).onDelete('cascade'),
+  workspaceInteractionFk: foreignKey({
+    name: 'ccos_metric_snapshots_workspace_interaction_fk', columns: [t.workspaceId, t.interactionId],
+    foreignColumns: [ccosInteractions.workspaceId, ccosInteractions.id],
+  }).onDelete('cascade'),
 }));
 
 // ============================================================

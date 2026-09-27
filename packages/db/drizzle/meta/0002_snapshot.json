@@ -1,5 +1,5 @@
 {
-  "id": "909e2c48-7c73-4472-9e3f-aa51477e88df",
+  "id": "f8ae7f54-e493-4228-8b46-2da316638d1e",
   "prevId": "26ecb7b6-c0b2-4e70-a09d-76accb9742c8",
   "version": "7",
   "dialect": "postgresql",
@@ -400,6 +400,27 @@
         }
       },
       "indexes": {
+        "ccos_interactions_workspace_id_id_idx": {
+          "name": "ccos_interactions_workspace_id_id_idx",
+          "columns": [
+            {
+              "expression": "workspace_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "ccos_interactions_workspace_partnership_idx": {
           "name": "ccos_interactions_workspace_partnership_idx",
           "columns": [
@@ -478,18 +499,35 @@
           "primaryKey": false,
           "notNull": true
         },
-        "entity_type": {
-          "name": "entity_type",
-          "type": "ccos_entity_type",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "entity_id": {
-          "name": "entity_id",
+        "store_id": {
+          "name": "store_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
+        },
+        "partnership_id": {
+          "name": "partnership_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "product_id": {
+          "name": "product_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "content_id": {
+          "name": "content_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "interaction_id": {
+          "name": "interaction_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
         },
         "metric_key": {
           "name": "metric_key",
@@ -549,23 +587,11 @@
         }
       },
       "indexes": {
-        "ccos_metric_snapshots_entity_metric_time_idx": {
-          "name": "ccos_metric_snapshots_entity_metric_time_idx",
+        "ccos_metric_snapshots_metric_time_idx": {
+          "name": "ccos_metric_snapshots_metric_time_idx",
           "columns": [
             {
               "expression": "workspace_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "entity_type",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "entity_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -602,6 +628,81 @@
           ],
           "onDelete": "cascade",
           "onUpdate": "no action"
+        },
+        "ccos_metric_snapshots_workspace_store_fk": {
+          "name": "ccos_metric_snapshots_workspace_store_fk",
+          "tableFrom": "ccos_metric_snapshots",
+          "tableTo": "ccos_stores",
+          "columnsFrom": [
+            "workspace_id",
+            "store_id"
+          ],
+          "columnsTo": [
+            "workspace_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "ccos_metric_snapshots_workspace_partnership_fk": {
+          "name": "ccos_metric_snapshots_workspace_partnership_fk",
+          "tableFrom": "ccos_metric_snapshots",
+          "tableTo": "ccos_partnerships",
+          "columnsFrom": [
+            "workspace_id",
+            "partnership_id"
+          ],
+          "columnsTo": [
+            "workspace_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "ccos_metric_snapshots_workspace_product_fk": {
+          "name": "ccos_metric_snapshots_workspace_product_fk",
+          "tableFrom": "ccos_metric_snapshots",
+          "tableTo": "ccos_products",
+          "columnsFrom": [
+            "workspace_id",
+            "product_id"
+          ],
+          "columnsTo": [
+            "workspace_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "ccos_metric_snapshots_workspace_content_fk": {
+          "name": "ccos_metric_snapshots_workspace_content_fk",
+          "tableFrom": "ccos_metric_snapshots",
+          "tableTo": "ccos_contents",
+          "columnsFrom": [
+            "workspace_id",
+            "content_id"
+          ],
+          "columnsTo": [
+            "workspace_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "ccos_metric_snapshots_workspace_interaction_fk": {
+          "name": "ccos_metric_snapshots_workspace_interaction_fk",
+          "tableFrom": "ccos_metric_snapshots",
+          "tableTo": "ccos_interactions",
+          "columnsFrom": [
+            "workspace_id",
+            "interaction_id"
+          ],
+          "columnsTo": [
+            "workspace_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -624,18 +725,35 @@
           "primaryKey": false,
           "notNull": true
         },
-        "entity_type": {
-          "name": "entity_type",
-          "type": "ccos_entity_type",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "entity_id": {
-          "name": "entity_id",
+        "store_id": {
+          "name": "store_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
+        },
+        "partnership_id": {
+          "name": "partnership_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "product_id": {
+          "name": "product_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "content_id": {
+          "name": "content_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "interaction_id": {
+          "name": "interaction_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
         },
         "title": {
           "name": "title",
@@ -726,33 +844,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "ccos_next_actions_workspace_entity_idx": {
-          "name": "ccos_next_actions_workspace_entity_idx",
-          "columns": [
-            {
-              "expression": "workspace_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "entity_type",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "entity_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
@@ -769,17 +860,94 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
-        "ccos_next_actions_owner_user_id_users_id_fk": {
-          "name": "ccos_next_actions_owner_user_id_users_id_fk",
+        "ccos_next_actions_workspace_owner_fk": {
+          "name": "ccos_next_actions_workspace_owner_fk",
           "tableFrom": "ccos_next_actions",
           "tableTo": "users",
           "columnsFrom": [
+            "workspace_id",
             "owner_user_id"
           ],
           "columnsTo": [
+            "workspace_id",
             "id"
           ],
-          "onDelete": "set null",
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "ccos_next_actions_workspace_store_fk": {
+          "name": "ccos_next_actions_workspace_store_fk",
+          "tableFrom": "ccos_next_actions",
+          "tableTo": "ccos_stores",
+          "columnsFrom": [
+            "workspace_id",
+            "store_id"
+          ],
+          "columnsTo": [
+            "workspace_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "ccos_next_actions_workspace_partnership_fk": {
+          "name": "ccos_next_actions_workspace_partnership_fk",
+          "tableFrom": "ccos_next_actions",
+          "tableTo": "ccos_partnerships",
+          "columnsFrom": [
+            "workspace_id",
+            "partnership_id"
+          ],
+          "columnsTo": [
+            "workspace_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "ccos_next_actions_workspace_product_fk": {
+          "name": "ccos_next_actions_workspace_product_fk",
+          "tableFrom": "ccos_next_actions",
+          "tableTo": "ccos_products",
+          "columnsFrom": [
+            "workspace_id",
+            "product_id"
+          ],
+          "columnsTo": [
+            "workspace_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "ccos_next_actions_workspace_content_fk": {
+          "name": "ccos_next_actions_workspace_content_fk",
+          "tableFrom": "ccos_next_actions",
+          "tableTo": "ccos_contents",
+          "columnsFrom": [
+            "workspace_id",
+            "content_id"
+          ],
+          "columnsTo": [
+            "workspace_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "ccos_next_actions_workspace_interaction_fk": {
+          "name": "ccos_next_actions_workspace_interaction_fk",
+          "tableFrom": "ccos_next_actions",
+          "tableTo": "ccos_interactions",
+          "columnsFrom": [
+            "workspace_id",
+            "interaction_id"
+          ],
+          "columnsTo": [
+            "workspace_id",
+            "id"
+          ],
+          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
@@ -2468,6 +2636,27 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "users_workspace_id_id_idx": {
+          "name": "users_workspace_id_id_idx",
+          "columns": [
+            {
+              "expression": "workspace_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -2863,17 +3052,6 @@
         "published",
         "ads_authorized",
         "monitoring"
-      ]
-    },
-    "public.ccos_entity_type": {
-      "name": "ccos_entity_type",
-      "schema": "public",
-      "values": [
-        "store",
-        "partnership",
-        "product",
-        "content",
-        "interaction"
       ]
     },
     "public.ccos_interaction_direction": {
