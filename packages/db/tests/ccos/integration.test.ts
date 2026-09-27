@@ -42,6 +42,25 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
     await expect(repository.getStore(workspaceB, store.id)).resolves.toBeNull();
   });
 
+  it('lists and updates stores only inside the authenticated workspace', async () => {
+    const storeA = await repository.createStore({ workspaceId: workspaceA, name: 'Alpha Store' });
+    await repository.createStore({ workspaceId: workspaceB, name: 'Hidden Store' });
+
+    const listed = await repository.listStores(workspaceA);
+    expect(listed.map((store) => store.name)).toContain('Alpha Store');
+    expect(listed.map((store) => store.name)).not.toContain('Hidden Store');
+
+    await expect(repository.updateStore(workspaceB, storeA.id, { name: 'Hijacked' })).resolves.toBeNull();
+    await expect(repository.updateStore(workspaceA, storeA.id, {
+      contactName: 'Creator Team',
+      contactEmail: 'creator@example.test',
+    })).resolves.toMatchObject({
+      name: 'Alpha Store',
+      contactName: 'Creator Team',
+      contactEmail: 'creator@example.test',
+    });
+  });
+
   it('rejects cross-workspace relationship writes at the database boundary', async () => {
     const store = await repository.createStore({ workspaceId: workspaceA, name: 'Protected Store' });
 
@@ -50,6 +69,47 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
       storeId: store.id,
       type: 'inbound_invite',
     })).rejects.toMatchObject({ code: '23503' });
+  });
+
+  it('keeps partnership CRUD tenant-scoped and rejects invalid lifecycle shortcuts', async () => {
+    const store = await repository.createStore({ workspaceId: workspaceA, name: 'Lifecycle Store' });
+    const partnership = await repository.createPartnership({
+      workspaceId: workspaceA,
+      storeId: store.id,
+      type: 'inbound_invite',
+      title: 'Launch collaboration',
+    });
+
+    await expect(repository.getPartnership(workspaceB, partnership.id)).resolves.toBeNull();
+    await expect(repository.updatePartnership(workspaceB, partnership.id, { status: 'contacted' })).resolves.toBeNull();
+    await expect(repository.updatePartnership(workspaceA, partnership.id, { status: 'active' })).rejects.toThrow(
+      'Invalid CCOS partnership transition: lead -> active',
+    );
+
+    await repository.updatePartnership(workspaceA, partnership.id, { status: 'contacted' });
+    await expect(repository.updatePartnership(workspaceA, partnership.id, {
+      status: 'negotiating',
+      priority: 'high',
+    })).resolves.toMatchObject({ status: 'negotiating', priority: 'high' });
+  });
+
+  it('serializes competing partnership transitions against the locked current status', async () => {
+    const store = await repository.createStore({ workspaceId: workspaceA, name: 'Concurrent Store' });
+    const partnership = await repository.createPartnership({
+      workspaceId: workspaceA,
+      storeId: store.id,
+      type: 'paid_campaign',
+    });
+    await repository.updatePartnership(workspaceA, partnership.id, { status: 'contacted' });
+    await repository.updatePartnership(workspaceA, partnership.id, { status: 'negotiating' });
+
+    const outcomes = await Promise.allSettled([
+      repository.updatePartnership(workspaceA, partnership.id, { status: 'active' }),
+      repository.updatePartnership(workspaceA, partnership.id, { status: 'declined' }),
+    ]);
+
+    expect(outcomes.filter(({ status }) => status === 'fulfilled')).toHaveLength(1);
+    expect(outcomes.filter(({ status }) => status === 'rejected')).toHaveLength(1);
   });
 
   it('rejects assigning an action to a user from another workspace', async () => {

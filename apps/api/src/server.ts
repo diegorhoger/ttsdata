@@ -23,6 +23,7 @@ import { registerOnboardingRoutes } from './routes/onboarding';
 import { registerMyPerformanceRoutes } from './routes/myPerformance';
 import { registerReferralRoutes } from './routes/referrals';
 import { registerHealthRoutes } from './routes/health';
+import { registerCCOSRoutes } from './routes/ccos';
 import { errorHandler } from './lib/errors';
 
 const PORT = parseInt(process.env.PORT || '4000', 10);
@@ -102,6 +103,9 @@ async function buildServer() {
 
   // Referral system
   await app.register(registerReferralRoutes, { prefix: '/api/referrals' });
+
+  // Creator Commerce Operating System
+  await app.register(registerCCOSRoutes, { prefix: '/api/ccos' });
 
   return app;
 }

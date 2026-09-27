@@ -8,5 +8,15 @@ export {
 } from './schema';
 
 export { OAuthRepository, type OAuthConfig } from './repositories/oauth';
-export { CCOSRepository } from './repositories/ccos';
+export {
+  CCOSRepository,
+  type CCOSPartnershipRecord,
+  type CCOSPriority,
+  type CCOSStoreRecord,
+  type CreateCCOSPartnershipInput,
+  type CreateCCOSStoreInput,
+  type PartnershipType,
+  type UpdateCCOSPartnershipInput,
+  type UpdateCCOSStoreInput,
+} from './repositories/ccos';
 export * from './ccos/lifecycle';

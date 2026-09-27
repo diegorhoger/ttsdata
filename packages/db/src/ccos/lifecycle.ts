@@ -4,6 +4,25 @@ export const PRODUCT_STATUSES = [
   'out_of_stock', 'replacement_needed', 'paused', 'completed',
 ] as const;
 
+export const PARTNERSHIP_STATUSES = [
+  'lead', 'contacted', 'negotiating', 'active', 'waiting', 'paused', 'completed',
+  'declined', 'cancelled',
+] as const;
+
+export type PartnershipStatus = (typeof PARTNERSHIP_STATUSES)[number];
+
+const PARTNERSHIP_TRANSITIONS: Readonly<Record<PartnershipStatus, readonly PartnershipStatus[]>> = {
+  lead: ['contacted', 'declined', 'cancelled'],
+  contacted: ['negotiating', 'waiting', 'declined', 'cancelled'],
+  negotiating: ['active', 'waiting', 'paused', 'declined', 'cancelled'],
+  active: ['waiting', 'paused', 'completed', 'cancelled'],
+  waiting: ['contacted', 'negotiating', 'active', 'paused', 'cancelled'],
+  paused: ['contacted', 'negotiating', 'active', 'waiting', 'cancelled'],
+  completed: [],
+  declined: [],
+  cancelled: [],
+};
+
 export type ProductStatus = (typeof PRODUCT_STATUSES)[number];
 
 const PRODUCT_TRANSITIONS: Readonly<Record<ProductStatus, readonly ProductStatus[]>> = {
@@ -48,6 +67,10 @@ export function canTransitionProduct(from: ProductStatus, to: ProductStatus): bo
   return PRODUCT_TRANSITIONS[from].includes(to);
 }
 
+export function canTransitionPartnership(from: PartnershipStatus, to: PartnershipStatus): boolean {
+  return PARTNERSHIP_TRANSITIONS[from].includes(to);
+}
+
 export function canTransitionContent(from: ContentStatus, to: ContentStatus): boolean {
   return CONTENT_TRANSITIONS[from].includes(to);
 }
@@ -55,6 +78,12 @@ export function canTransitionContent(from: ContentStatus, to: ContentStatus): bo
 export function assertProductTransition(from: ProductStatus, to: ProductStatus): void {
   if (!canTransitionProduct(from, to)) {
     throw new Error(`Invalid CCOS product transition: ${from} -> ${to}`);
+  }
+}
+
+export function assertPartnershipTransition(from: PartnershipStatus, to: PartnershipStatus): void {
+  if (!canTransitionPartnership(from, to)) {
+    throw new Error(`Invalid CCOS partnership transition: ${from} -> ${to}`);
   }
 }
 
