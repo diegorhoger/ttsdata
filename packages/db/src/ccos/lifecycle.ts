@@ -46,7 +46,7 @@ const PRODUCT_TRANSITIONS: Readonly<Record<ProductStatus, readonly ProductStatus
 
 export const CONTENT_STATUSES = [
   'idea', 'planned', 'filming', 'editing', 'ready', 'scheduled', 'published',
-  'ads_authorized', 'monitoring', 'completed',
+  'ads_authorized', 'monitoring',
 ] as const;
 
 export type ContentStatus = (typeof CONTENT_STATUSES)[number];
@@ -60,8 +60,7 @@ const CONTENT_TRANSITIONS: Readonly<Record<ContentStatus, readonly ContentStatus
   scheduled: ['ready', 'published'],
   published: ['ads_authorized', 'monitoring'],
   ads_authorized: ['monitoring'],
-  monitoring: ['completed'],
-  completed: [],
+  monitoring: [],
 };
 
 export function canTransitionProduct(from: ProductStatus, to: ProductStatus): boolean {
