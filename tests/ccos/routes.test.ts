@@ -501,4 +501,25 @@ describe('CCOS store and partnership routes', () => {
     expect(response.statusCode).toBe(409);
     expect(response.json()).toMatchObject({ error: 'INVALID_TRANSITION' });
   });
+
+  it('delegates publication metadata clears to the persisted-state invariant and returns conflict', async () => {
+    const repository = createRepository();
+    repository.updateContent.mockRejectedValueOnce(
+      new Error('Invalid CCOS content publication: publishedAt and publicationUrl are required'),
+    );
+    const app = await buildApp(repository);
+    apps.push(app);
+
+    const response = await app.inject({
+      method: 'PATCH',
+      url: `/api/ccos/contents/${CONTENT_ID}`,
+      payload: { publishedAt: null, publicationUrl: null },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(repository.updateContent).toHaveBeenCalledWith(WORKSPACE_ID, CONTENT_ID, {
+      publishedAt: null,
+      publicationUrl: null,
+    });
+  });
 });

@@ -514,13 +514,22 @@ export class CCOSRepository {
       }
       const statusChanged = input.status !== undefined && input.status !== current.status;
       if (statusChanged) assertContentTransition(current.status, input.status!);
-      if (input.status === 'scheduled' && !(input.scheduledAt ?? current.scheduledAt)) {
+      const effectiveStatus = input.status ?? current.status;
+      const effectiveScheduledAt = input.scheduledAt !== undefined ? input.scheduledAt : current.scheduledAt;
+      const effectivePublishedAt = input.publishedAt !== undefined ? input.publishedAt : current.publishedAt;
+      const effectivePublicationUrl = input.publicationUrl !== undefined
+        ? input.publicationUrl
+        : current.publicationUrl;
+      if (effectiveStatus === 'scheduled' && !effectiveScheduledAt) {
         throw new Error('Invalid CCOS content scheduling: scheduledAt is required');
       }
-      if (input.status === 'published'
-        && (!(input.publishedAt ?? current.publishedAt) || !(input.publicationUrl ?? current.publicationUrl))) {
+      if (['published', 'ads_authorized', 'monitoring'].includes(effectiveStatus)
+        && (!effectivePublishedAt || !effectivePublicationUrl)) {
         throw new Error('Invalid CCOS content publication: publishedAt and publicationUrl are required');
       }
+      const metadataChanged = input.scheduledAt !== undefined
+        || input.publishedAt !== undefined
+        || input.publicationUrl !== undefined;
 
       const updates: string[] = [];
       const values: unknown[] = [workspaceId, contentId];
@@ -543,13 +552,15 @@ export class CCOSRepository {
         `UPDATE ccos_contents SET ${updates.join(', ')}, updated_at = NOW()
          WHERE workspace_id = $1 AND id = $2 RETURNING ${CONTENT_COLUMNS}`, values,
       );
-      if (statusChanged) {
+      if (statusChanged || metadataChanged) {
+        const summary = statusChanged
+          ? `Content ${current.id} lifecycle changed: ${current.status} -> ${input.status}${metadataChanged ? '; publication metadata updated' : ''}`
+          : `Content ${current.id} publication metadata updated`;
         await client.query(
           `INSERT INTO ccos_interactions
            (workspace_id, partnership_id, direction, channel, summary, occurred_at, source)
            VALUES ($1, $2, 'system', 'content_lifecycle', $3, NOW(), 'system')`,
-          [workspaceId, selected.rows[0].partnership_id,
-            `Content ${current.id} lifecycle changed: ${current.status} -> ${input.status}`],
+          [workspaceId, selected.rows[0].partnership_id, summary],
         );
       }
       await client.query('COMMIT');
