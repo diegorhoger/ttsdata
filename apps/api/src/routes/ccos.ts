@@ -2,13 +2,16 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
   CCOSRepository,
+  type CCOSContentRecord,
   type CCOSPartnershipRecord,
   type CCOSProductRecord,
   type CCOSStoreRecord,
   type CreateCCOSPartnershipInput,
+  type CreateCCOSContentInput,
   type CreateCCOSProductInput,
   type CreateCCOSStoreInput,
   type UpdateCCOSPartnershipInput,
+  type UpdateCCOSContentInput,
   type UpdateCCOSProductInput,
   type UpdateCCOSStoreInput,
 } from '@ttsdata/db';
@@ -28,6 +31,10 @@ const productStatus = z.enum([
   'content_queue', 'in_production', 'content_live', 'monitoring', 'declined', 'cancelled',
   'out_of_stock', 'replacement_needed', 'paused', 'completed',
 ]);
+const contentStatus = z.enum([
+  'idea', 'planned', 'filming', 'editing', 'ready', 'scheduled', 'published',
+  'ads_authorized', 'monitoring',
+]);
 const decimalValue = (maxIntegerDigits: number) => z.string().regex(
   new RegExp(`^\\d{1,${maxIntegerDigits}}(?:\\.\\d{1,6})?$`),
   `Must be a non-negative decimal with at most ${maxIntegerDigits} integer and 6 fractional digits`,
@@ -41,6 +48,7 @@ const dateValue: z.ZodType<Date, z.ZodTypeDef, unknown> = z.preprocess(
 const storeParamsSchema = z.object({ storeId: z.string().uuid() }).strict();
 const partnershipParamsSchema = z.object({ partnershipId: z.string().uuid() }).strict();
 const productParamsSchema = z.object({ productId: z.string().uuid() }).strict();
+const contentParamsSchema = z.object({ contentId: z.string().uuid() }).strict();
 
 const createStoreSchema = z.object({
   name: z.string().trim().min(1).max(255),
@@ -107,6 +115,22 @@ const updateProductSchema = z.object({
   provenance: z.unknown().optional(),
 }).strict().refine((body) => Object.keys(body).length > 0, 'At least one field is required');
 
+const createContentSchema = z.object({
+  platform: z.string().trim().min(1).max(64),
+  format: z.string().trim().min(1).max(64).optional(),
+  concept: z.string().max(20_000).optional(),
+}).strict();
+
+const updateContentSchema = z.object({
+  status: contentStatus.optional(),
+  platform: z.string().trim().min(1).max(64).optional(),
+  format: z.string().trim().min(1).max(64).nullable().optional(),
+  concept: z.string().max(20_000).nullable().optional(),
+  scheduledAt: dateValue.nullable().optional(),
+  publishedAt: dateValue.nullable().optional(),
+  publicationUrl: z.string().url().max(2048).nullable().optional(),
+}).strict().refine((body) => Object.keys(body).length > 0, 'At least one field is required');
+
 type StorePartnershipRepository = {
   createStore(input: CreateCCOSStoreInput): Promise<CCOSStoreRecord>;
   listStores(workspaceId: string): Promise<CCOSStoreRecord[]>;
@@ -128,6 +152,14 @@ type StorePartnershipRepository = {
     productId: string,
     input: UpdateCCOSProductInput,
   ): Promise<CCOSProductRecord | null>;
+  createContent(input: CreateCCOSContentInput): Promise<CCOSContentRecord>;
+  listContents(workspaceId: string, productId?: string): Promise<CCOSContentRecord[]>;
+  getContent(workspaceId: string, contentId: string): Promise<CCOSContentRecord | null>;
+  updateContent(
+    workspaceId: string,
+    contentId: string,
+    input: UpdateCCOSContentInput,
+  ): Promise<CCOSContentRecord | null>;
 };
 
 function parse<T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, input: unknown): T {
@@ -272,6 +304,56 @@ export async function registerCCOSRoutes(app: FastifyInstance, options: CCOSRout
       return reply.send({ product });
     } catch (error) {
       if (error instanceof Error && error.message.startsWith('Invalid CCOS product transition:')) {
+        throw new AppError(error.message, 409, 'INVALID_TRANSITION');
+      }
+      throw error;
+    }
+  });
+
+  app.get('/contents', { preHandler: authenticate }, async (request, reply) => {
+    const query = parse(z.object({ productId: z.string().uuid().optional() }).strict(), request.query);
+    return reply.send({
+      contents: await repository.listContents(request.auth!.workspaceId, query.productId),
+    });
+  });
+
+  app.post('/products/:productId/contents', {
+    preHandler: [authenticate, authorizeWorkspaceWrite],
+  }, async (request, reply) => {
+    const { productId } = parse(productParamsSchema, request.params);
+    const workspaceId = request.auth!.workspaceId;
+    if (!await repository.getProduct(workspaceId, productId)) {
+      throw new AppError('Product not found', 404, 'NOT_FOUND');
+    }
+    const content = await repository.createContent({
+      workspaceId,
+      productId,
+      ...parse(createContentSchema, request.body),
+    });
+    return reply.status(201).send({ content });
+  });
+
+  app.get('/contents/:contentId', { preHandler: authenticate }, async (request, reply) => {
+    const { contentId } = parse(contentParamsSchema, request.params);
+    const content = await repository.getContent(request.auth!.workspaceId, contentId);
+    if (!content) throw new AppError('Content not found', 404, 'NOT_FOUND');
+    return reply.send({ content });
+  });
+
+  app.patch('/contents/:contentId', {
+    preHandler: [authenticate, authorizeWorkspaceWrite],
+  }, async (request, reply) => {
+    const { contentId } = parse(contentParamsSchema, request.params);
+    try {
+      const content = await repository.updateContent(
+        request.auth!.workspaceId,
+        contentId,
+        parse(updateContentSchema, request.body),
+      );
+      if (!content) throw new AppError('Content not found', 404, 'NOT_FOUND');
+      return reply.send({ content });
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('Invalid CCOS content')) {
         throw new AppError(error.message, 409, 'INVALID_TRANSITION');
       }
       throw error;

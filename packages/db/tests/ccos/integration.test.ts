@@ -231,6 +231,139 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
     expect(events.rows[0].count).toBe('6');
   });
 
+  it('supports multiple independent content records per product with tenant isolation', async () => {
+    const store = await repository.createStore({ workspaceId: workspaceA, name: 'Creative Store' });
+    const partnership = await repository.createPartnership({
+      workspaceId: workspaceA,
+      storeId: store.id,
+      type: 'affiliate',
+    });
+    const product = await repository.createProduct({
+      workspaceId: workspaceA,
+      partnershipId: partnership.id,
+      name: 'Creative Product',
+    });
+    const first = await repository.createContent({
+      workspaceId: workspaceA,
+      productId: product.id,
+      platform: 'tiktok',
+      format: 'vertical_video',
+      concept: 'Hook A',
+    });
+    const second = await repository.createContent({
+      workspaceId: workspaceA,
+      productId: product.id,
+      platform: 'instagram',
+      format: 'reel',
+      concept: 'Hook B',
+    });
+
+    const listed = await repository.listContents(workspaceA, product.id);
+    expect(listed.map(({ id }) => id)).toEqual(expect.arrayContaining([first.id, second.id]));
+    expect(first.id).not.toBe(second.id);
+    await expect(repository.getContent(workspaceB, first.id)).resolves.toBeNull();
+    await expect(repository.updateContent(workspaceB, first.id, { status: 'planned' })).resolves.toBeNull();
+    await expect(repository.createContent({
+      workspaceId: workspaceB,
+      productId: product.id,
+      platform: 'youtube',
+    })).rejects.toMatchObject({ code: '23503' });
+  });
+
+  it('advances each content independently and audits publication metadata', async () => {
+    const store = await repository.createStore({ workspaceId: workspaceA, name: 'Publishing Store' });
+    const partnership = await repository.createPartnership({
+      workspaceId: workspaceA,
+      storeId: store.id,
+      type: 'paid_campaign',
+    });
+    const product = await repository.createProduct({
+      workspaceId: workspaceA,
+      partnershipId: partnership.id,
+      name: 'Publishing Product',
+    });
+    const primary = await repository.createContent({
+      workspaceId: workspaceA,
+      productId: product.id,
+      platform: 'tiktok',
+      concept: 'Primary hook',
+    });
+    const variant = await repository.createContent({
+      workspaceId: workspaceA,
+      productId: product.id,
+      platform: 'tiktok',
+      concept: 'Variant hook',
+    });
+
+    await expect(repository.updateContent(workspaceA, primary.id, { status: 'published' })).rejects.toThrow(
+      'Invalid CCOS content transition: idea -> published',
+    );
+    await repository.updateContent(workspaceA, primary.id, { status: 'planned' });
+    await repository.updateContent(workspaceA, primary.id, { status: 'filming' });
+    await repository.updateContent(workspaceA, primary.id, { status: 'editing' });
+    await repository.updateContent(workspaceA, primary.id, { status: 'ready' });
+    await expect(repository.updateContent(workspaceA, primary.id, { status: 'scheduled' })).rejects.toThrow(
+      'Invalid CCOS content scheduling: scheduledAt is required',
+    );
+    await repository.updateContent(workspaceA, primary.id, {
+      status: 'scheduled',
+      scheduledAt: new Date('2026-10-01T12:00:00.000Z'),
+    });
+    await expect(repository.updateContent(workspaceA, primary.id, { status: 'published' })).rejects.toThrow(
+      'Invalid CCOS content publication: publishedAt and publicationUrl are required',
+    );
+    const published = await repository.updateContent(workspaceA, primary.id, {
+      status: 'published',
+      publishedAt: new Date('2026-10-01T13:00:00.000Z'),
+      publicationUrl: 'https://www.tiktok.com/@creator/video/123',
+    });
+
+    expect(published).toMatchObject({ status: 'published', publicationUrl: 'https://www.tiktok.com/@creator/video/123' });
+    await expect(repository.getContent(workspaceA, variant.id)).resolves.toMatchObject({ status: 'idea' });
+    const events = await pool.query<{ summary: string }>(
+      `SELECT summary FROM ccos_interactions
+        WHERE workspace_id = $1 AND partnership_id = $2 AND channel = 'content_lifecycle'
+        ORDER BY occurred_at`,
+      [workspaceA, partnership.id],
+    );
+    expect(events.rows).toHaveLength(6);
+    expect(events.rows.at(-1)?.summary).toBe(
+      `Content ${primary.id} lifecycle changed: scheduled -> published`,
+    );
+  });
+
+  it('serializes mutually exclusive content transitions', async () => {
+    const store = await repository.createStore({ workspaceId: workspaceA, name: 'Content Race Store' });
+    const partnership = await repository.createPartnership({
+      workspaceId: workspaceA,
+      storeId: store.id,
+      type: 'gifting',
+    });
+    const product = await repository.createProduct({
+      workspaceId: workspaceA,
+      partnershipId: partnership.id,
+      name: 'Content Race Product',
+    });
+    const content = await repository.createContent({
+      workspaceId: workspaceA,
+      productId: product.id,
+      platform: 'youtube',
+    });
+    await repository.updateContent(workspaceA, content.id, { status: 'planned' });
+    await repository.updateContent(workspaceA, content.id, { status: 'filming' });
+    await repository.updateContent(workspaceA, content.id, { status: 'editing' });
+
+    const outcomes = await Promise.allSettled([
+      repository.updateContent(workspaceA, content.id, { status: 'filming' }),
+      repository.updateContent(workspaceA, content.id, { status: 'ready' }),
+    ]);
+
+    expect(outcomes.filter(({ status }) => status === 'fulfilled')).toHaveLength(1);
+    expect(outcomes.filter(({ status }) => status === 'rejected')).toHaveLength(1);
+    const persisted = await repository.getContent(workspaceA, content.id);
+    expect(['filming', 'ready']).toContain(persisted?.status);
+  });
+
   it('rejects assigning an action to a user from another workspace', async () => {
     const store = await repository.createStore({ workspaceId: workspaceA, name: 'Action Store' });
     const user = await pool.query<{ id: string }>(
