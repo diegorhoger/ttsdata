@@ -1040,6 +1040,10 @@ function extractTemplateVariables(subject: string, body: string): string[] {
 }
 
 function assertTemplateDefinition(subject: string, body: string, declaredVariables: string[]): void {
+  const withoutValidPlaceholders = `${subject}\n${body}`.replace(/\{\{\w+\}\}/g, '');
+  if (withoutValidPlaceholders.includes('{{') || withoutValidPlaceholders.includes('}}')) {
+    throw new Error('Invalid CCOS template definition: malformed placeholder');
+  }
   const actual = extractTemplateVariables(subject, body);
   const declared = [...new Set(declaredVariables)].sort();
   if (declared.length !== declaredVariables.length || actual.join('\0') !== declared.join('\0')) {
