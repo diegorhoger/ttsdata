@@ -919,10 +919,12 @@ export class CCOSRepository {
       const authorizationChanged = authorizationStatusChanged || authorizationCodeChanged
         || authorizationCreatedAtChanged || authorizationExpiresAtChanged;
       if (statusChanged || metadataChanged || authorizationChanged) {
-        const summary = statusChanged
-          ? `Content ${current.id} lifecycle changed: ${current.status} -> ${input.status}${metadataChanged ? '; publication metadata updated' : ''}`
-          : authorizationChanged ? `Content ${current.id} ad authorization details updated`
-            : `Content ${current.id} publication metadata updated`;
+        const summaryParts: string[] = [];
+        if (statusChanged) summaryParts.push(`Content ${current.id} lifecycle changed: ${current.status} -> ${input.status}`);
+        else summaryParts.push(`Content ${current.id}`);
+        if (metadataChanged) summaryParts.push('publication metadata updated');
+        if (authorizationChanged) summaryParts.push('ad authorization details updated');
+        const summary = summaryParts.join('; ');
         await client.query(
           `INSERT INTO ccos_interactions
            (workspace_id, partnership_id, direction, channel, summary, occurred_at, source)

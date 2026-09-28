@@ -422,6 +422,16 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
       adAuthorizationStatus: 'authorized', adAuthorizationCode: 'MANUAL-CODE-1',
       adAuthorizationCreatedAt: createdAt, adAuthorizationExpiresAt: expiresAt,
     });
+    await repository.updateContent(workspaceA, first.id, {
+      status: 'planned',
+      adAuthorizationCode: 'MANUAL-CODE-2',
+    });
+    const combinedAudit = await pool.query<{ summary: string }>(
+      `SELECT summary FROM ccos_interactions
+        WHERE workspace_id = $1 AND summary LIKE $2 ORDER BY occurred_at DESC LIMIT 1`,
+      [workspaceA, `Content ${first.id} lifecycle changed:%`],
+    );
+    expect(combinedAudit.rows[0].summary).toContain('ad authorization details updated');
     const authorizationActions = await pool.query<{ id: string; rule_key: string; due_at: Date | null; status: string }>(
       `SELECT id, rule_key, due_at, status FROM ccos_next_actions
         WHERE workspace_id = $1 AND content_id = $2 AND rule_key LIKE 'content.ad-auth.%'
