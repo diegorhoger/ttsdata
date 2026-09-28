@@ -653,4 +653,19 @@ describe('CCOS store and partnership routes', () => {
     expect(repository.getNextAction).not.toHaveBeenCalled();
     expect(repository.createNextAction).not.toHaveBeenCalled();
   });
+
+  it('returns conflict when a generated action can only be resolved by lifecycle transition', async () => {
+    const repository = createRepository();
+    repository.updateNextAction.mockRejectedValueOnce(
+      new Error('Generated CCOS next actions are resolved only by a target lifecycle transition'),
+    );
+    const app = await buildApp(repository);
+    apps.push(app);
+
+    const response = await app.inject({
+      method: 'PATCH', url: `/api/ccos/next-actions/${ACTION_ID}`, payload: { status: 'completed' },
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ error: 'INVALID_TRANSITION' });
+  });
 });
