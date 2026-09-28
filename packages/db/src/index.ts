@@ -5,6 +5,7 @@ export {
   trendSignals, watchlists, watchlistItems, alertRules, alertHistory,
   ccosStores, ccosPartnerships, ccosProducts, ccosContents,
   ccosInteractions, ccosNextActions, ccosMetricSnapshots,
+  ccosTemplateVersions, ccosTemplateUsage, ccosInteractionSources,
 } from './schema';
 
 export { OAuthRepository, type OAuthConfig } from './repositories/oauth';
@@ -29,6 +30,12 @@ export {
   type UpdateCCOSNextActionInput,
   type UpdateCCOSProductInput,
   type UpdateCCOSStoreInput,
+  type CCOSTemplateType,
+  type CreateCCOSTemplateVersionInput,
+  type CCOSTemplateVersionRecord,
+  type CCOInteractionSourceRecord,
+  type CreateCCOSInteractionInput,
+  type CCOSInteractionRecord,
 } from './repositories/ccos';
 export * from './ccos/lifecycle';
 export * from './ccos/next-actions';

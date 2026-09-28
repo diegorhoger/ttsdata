@@ -70,6 +70,11 @@ export const ccosInteractionDirectionEnum = pgEnum('ccos_interaction_direction',
   'inbound', 'outbound', 'system',
 ]);
 
+export const ccosTemplateTypeEnum = pgEnum('ccos_template_type', [
+  'invite_first_contact', 'partnership_confirm', 'sample_confirm', 'receipt',
+  'publication', 'ad_auth', 'followup_performance',
+]);
+
 export const ccosNextActionStatusEnum = pgEnum('ccos_next_action_status', [
   'open', 'in_progress', 'waiting', 'completed', 'cancelled',
 ]);
@@ -459,6 +464,7 @@ export const ccosInteractions = pgTable('ccos_interactions', {
   summary: text('summary').notNull(),
   occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
   source: varchar('source', { length: 64 }).notNull().default('manual'),
+  templateVersionId: uuid('template_version_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   workspaceIdUnique: uniqueIndex('ccos_interactions_workspace_id_id_idx').on(t.workspaceId, t.id),
@@ -467,6 +473,65 @@ export const ccosInteractions = pgTable('ccos_interactions', {
     name: 'ccos_interactions_workspace_partnership_fk',
     columns: [t.workspaceId, t.partnershipId],
     foreignColumns: [ccosPartnerships.workspaceId, ccosPartnerships.id],
+  }).onDelete('cascade'),
+  workspaceTemplateVersionFk: foreignKey({
+    name: 'ccos_interactions_workspace_template_version_fk',
+    columns: [t.workspaceId, t.templateVersionId],
+    foreignColumns: [ccosTemplateVersions.workspaceId, ccosTemplateVersions.id],
+  }).onDelete('no action'),
+}));
+
+export const ccosTemplateVersions = pgTable('ccos_template_versions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  type: ccosTemplateTypeEnum('type').notNull(),
+  version: integer('version').notNull().default(1),
+  subject: varchar('subject', { length: 512 }).notNull(),
+  body: text('body').notNull(),
+  variables: jsonb('variables').$type<string[]>().notNull().default([]),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  workspaceTypeVersionIdx: uniqueIndex('ccos_template_versions_workspace_type_version_idx').on(t.workspaceId, t.type, t.version),
+  workspaceTypeIdx: index('ccos_template_versions_workspace_type_idx').on(t.workspaceId, t.type),
+  workspaceIdUnique: uniqueIndex('ccos_template_versions_workspace_id_id_idx').on(t.workspaceId, t.id),
+}));
+
+export const ccosTemplateUsage = pgTable('ccos_template_usage', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  templateVersionId: uuid('template_version_id').notNull(),
+  interactionId: uuid('interaction_id').notNull(),
+  usedAt: timestamp('used_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  workspaceIdIdx: index('ccos_template_usage_workspace_idx').on(t.workspaceId),
+  templateVersionIdx: index('ccos_template_usage_template_version_idx').on(t.templateVersionId),
+  interactionIdx: uniqueIndex('ccos_template_usage_interaction_idx').on(t.interactionId),
+  templateVersionFk: foreignKey({
+    name: 'ccos_template_usage_workspace_template_version_fk',
+    columns: [t.workspaceId, t.templateVersionId],
+    foreignColumns: [ccosTemplateVersions.workspaceId, ccosTemplateVersions.id],
+  }).onDelete('no action'),
+  interactionFk: foreignKey({
+    name: 'ccos_template_usage_workspace_interaction_fk',
+    columns: [t.workspaceId, t.interactionId],
+    foreignColumns: [ccosInteractions.workspaceId, ccosInteractions.id],
+  }).onDelete('cascade'),
+}));
+
+export const ccosInteractionSources = pgTable('ccos_interaction_sources', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  interactionId: uuid('interaction_id').notNull(),
+  sourceType: varchar('source_type', { length: 64 }).notNull(), // 'product', 'content', 'partnership', 'action', 'template_version'
+  sourceId: uuid('source_id').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  workspaceInteractionIdx: index('ccos_interaction_sources_workspace_interaction_idx').on(t.workspaceId, t.interactionId),
+  interactionFk: foreignKey({
+    name: 'ccos_interaction_sources_workspace_interaction_fk',
+    columns: [t.workspaceId, t.interactionId],
+    foreignColumns: [ccosInteractions.workspaceId, ccosInteractions.id],
   }).onDelete('cascade'),
 }));
 
@@ -600,3 +665,7 @@ export const oauthProbeResults = pgTable('oauth_probe_results', {
 
 export type OAuthState = typeof oauthStates.$inferSelect;
 export type OAuthProbeResult = typeof oauthProbeResults.$inferSelect;
+
+export type CCOSTemplateVersion = typeof ccosTemplateVersions.$inferSelect;
+export type CCOSTemplateUsage = typeof ccosTemplateUsage.$inferSelect;
+export type CCOInteractionSource = typeof ccosInteractionSources.$inferSelect;

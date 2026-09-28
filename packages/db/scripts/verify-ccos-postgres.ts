@@ -12,6 +12,9 @@ const CCOS_TABLES = [
   'ccos_products',
   'ccos_contents',
   'ccos_interactions',
+  'ccos_interaction_sources',
+  'ccos_template_versions',
+  'ccos_template_usage',
   'ccos_next_actions',
   'ccos_metric_snapshots',
 ] as const;
@@ -21,7 +24,7 @@ type ForeignKeyExpectation = {
   sourceColumns: string[];
   targetTable: string;
   targetColumns: string[];
-  deleteAction: 'c' | 'r';
+  deleteAction: 'c' | 'r' | 'a';
 };
 
 const workspaceForeignKey = (sourceTable: string): ForeignKeyExpectation => ({
@@ -38,7 +41,7 @@ const tenantForeignKey = (
   sourceTable: string,
   targetColumn: string,
   targetTable: string,
-  deleteAction: 'c' | 'r' = 'c',
+  deleteAction: 'c' | 'r' | 'a' = 'c',
 ): ForeignKeyExpectation => ({
   name,
   sourceTable,
@@ -53,6 +56,13 @@ const CCOS_FOREIGN_KEYS: ForeignKeyExpectation[] = [
   tenantForeignKey('ccos_contents_workspace_product_fk', 'ccos_contents', 'product_id', 'ccos_products'),
   workspaceForeignKey('ccos_interactions'),
   tenantForeignKey('ccos_interactions_workspace_partnership_fk', 'ccos_interactions', 'partnership_id', 'ccos_partnerships'),
+  tenantForeignKey('ccos_interactions_workspace_template_version_fk', 'ccos_interactions', 'template_version_id', 'ccos_template_versions', 'a'),
+  workspaceForeignKey('ccos_interaction_sources'),
+  tenantForeignKey('ccos_interaction_sources_workspace_interaction_fk', 'ccos_interaction_sources', 'interaction_id', 'ccos_interactions'),
+  workspaceForeignKey('ccos_template_versions'),
+  workspaceForeignKey('ccos_template_usage'),
+  tenantForeignKey('ccos_template_usage_workspace_template_version_fk', 'ccos_template_usage', 'template_version_id', 'ccos_template_versions', 'a'),
+  tenantForeignKey('ccos_template_usage_workspace_interaction_fk', 'ccos_template_usage', 'interaction_id', 'ccos_interactions'),
   workspaceForeignKey('ccos_metric_snapshots'),
   tenantForeignKey('ccos_metric_snapshots_workspace_store_fk', 'ccos_metric_snapshots', 'store_id', 'ccos_stores'),
   tenantForeignKey('ccos_metric_snapshots_workspace_partnership_fk', 'ccos_metric_snapshots', 'partnership_id', 'ccos_partnerships'),
@@ -85,6 +95,7 @@ if (!parsedUrl.pathname.slice(1).endsWith('_test')) {
 const packageRoot = resolve(process.cwd());
 const migrationsFolder = resolve(packageRoot, 'drizzle');
 const rollbackPaths = [
+  resolve(migrationsFolder, 'rollback/0005_free_human_robot.down.sql'),
   resolve(migrationsFolder, 'rollback/0004_brainy_black_bird.down.sql'),
   resolve(migrationsFolder, 'rollback/0003_silly_otto_octavius.down.sql'),
   resolve(migrationsFolder, 'rollback/0002_worried_lyja.down.sql'),
@@ -122,7 +133,7 @@ async function getMigrationCreatedAt(): Promise<number[]> {
   const journal = JSON.parse(await readFile(journalPath, 'utf8')) as {
     entries?: Array<{ tag?: string; when?: number }>;
   };
-  const tags = ['0002_worried_lyja', '0003_silly_otto_octavius', '0004_brainy_black_bird'];
+  const tags = ['0002_worried_lyja', '0003_silly_otto_octavius', '0004_brainy_black_bird', '0005_free_human_robot'];
   const entries = tags.map((tag) => journal.entries?.find((entry) => entry.tag === tag));
   if (entries.some((entry) => !entry || typeof entry.when !== 'number')) {
     throw new Error('Migration journal is missing a CCOS migration entry');
@@ -174,6 +185,13 @@ async function assertForwardSchema(): Promise<void> {
   if (actionColumns.rowCount !== 4) {
     throw new Error(`Expected four next-action automation columns, found ${actionColumns.rowCount ?? 0}`);
   }
+
+  const interactionColumns = await pool.query<{ column_name: string }>(
+    `SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'ccos_interactions'
+        AND column_name = 'template_version_id'`,
+  );
+  if (interactionColumns.rowCount !== 1) throw new Error('Missing interaction template_version_id column');
 
   const foreignKeys = await pool.query<{
     name: string;
@@ -265,8 +283,8 @@ async function main(): Promise<void> {
       'DELETE FROM drizzle.__drizzle_migrations WHERE created_at = ANY($1::bigint[]) RETURNING id',
       [migrationCreatedAt],
     );
-    if (deleted.rowCount !== 3) {
-      throw new Error(`Expected three CCOS migration journal rows, removed ${deleted.rowCount ?? 0}`);
+    if (deleted.rowCount !== 4) {
+      throw new Error(`Expected four CCOS migration journal rows, removed ${deleted.rowCount ?? 0}`);
     }
     await client.query('COMMIT');
   } catch (error) {

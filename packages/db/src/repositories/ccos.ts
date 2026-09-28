@@ -820,5 +820,326 @@ export class CCOSRepository {
     }
   }
 
+
+  // Interaction methods
+  async createInteraction(input: CreateCCOSInteractionInput): Promise<CCOSInteractionRecord> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      // Lock the partnership while checking polymorphic sources: all linked entities must
+      // belong to this same timeline, not merely to the same tenant.
+      const partnership = await client.query(
+        'SELECT id FROM ccos_partnerships WHERE workspace_id = $1 AND id = $2 FOR SHARE',
+        [input.workspaceId, input.partnershipId],
+      );
+      if (partnership.rowCount !== 1) throw new Error('CCOS partnership not found in workspace');
+      for (const link of input.sourceLinks ?? []) {
+        const sourceQuery: Record<CCOSInteractionSourceType, string> = {
+          partnership: `SELECT id FROM ccos_partnerships WHERE workspace_id = $1 AND id = $2 AND id = $3 FOR SHARE`,
+          product: `SELECT id FROM ccos_products WHERE workspace_id = $1 AND id = $2 AND partnership_id = $3 FOR SHARE`,
+          content: `SELECT c.id FROM ccos_contents c JOIN ccos_products p ON p.workspace_id = c.workspace_id AND p.id = c.product_id
+                    WHERE c.workspace_id = $1 AND c.id = $2 AND p.partnership_id = $3 FOR SHARE OF c, p`,
+          action: `SELECT a.id FROM ccos_next_actions a
+                   LEFT JOIN ccos_products p ON p.workspace_id = a.workspace_id AND p.id = a.product_id
+                   LEFT JOIN ccos_contents c ON c.workspace_id = a.workspace_id AND c.id = a.content_id
+                   LEFT JOIN ccos_products cp ON cp.workspace_id = c.workspace_id AND cp.id = c.product_id
+                   LEFT JOIN ccos_partnerships ps ON ps.workspace_id = a.workspace_id AND ps.id = $3
+                   LEFT JOIN ccos_interactions i ON i.workspace_id = a.workspace_id AND i.id = a.interaction_id
+                   WHERE a.workspace_id = $1 AND a.id = $2 AND ps.id IS NOT NULL AND
+                   (a.partnership_id = $3 OR p.partnership_id = $3 OR cp.partnership_id = $3
+                    OR i.partnership_id = $3 OR a.store_id = ps.store_id) FOR SHARE OF a`,
+          template_version: `SELECT id FROM ccos_template_versions WHERE workspace_id = $1 AND id = $2 FOR SHARE`,
+        };
+        if (!Object.hasOwn(sourceQuery, link.sourceType)) throw new Error('Invalid CCOS interaction source type');
+        const sourceParams = link.sourceType === 'template_version'
+          ? [input.workspaceId, link.sourceId]
+          : [input.workspaceId, link.sourceId, input.partnershipId];
+        const source = await client.query(sourceQuery[link.sourceType], sourceParams);
+        if (source.rowCount !== 1) throw new Error('CCOS interaction source not found in partnership/workspace');
+      }
+      const occurredAt = input.occurredAt ?? new Date();
+      const result = await client.query<InteractionRow>(
+        `INSERT INTO ccos_interactions (workspace_id, partnership_id, direction, channel, summary, occurred_at, source, template_version_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING ${INTERACTION_COLUMNS}`,
+        [input.workspaceId, input.partnershipId, input.direction, input.channel, input.summary,
+         occurredAt, input.source ?? 'manual', input.templateVersionId ?? null],
+      );
+      if (result.rowCount !== 1) throw new Error('CCOS interaction insert did not return exactly one row');
+      const interaction = mapInteraction(result.rows[0]);
+
+      // Record template usage if template version provided
+      if (input.templateVersionId) {
+        await client.query(
+          `INSERT INTO ccos_template_usage (workspace_id, template_version_id, interaction_id)
+           VALUES ($1, $2, $3)`,
+          [input.workspaceId, input.templateVersionId, interaction.id],
+        );
+      }
+
+      // Record source links
+      if (input.sourceLinks && input.sourceLinks.length > 0) {
+        for (const link of input.sourceLinks) {
+          await client.query(
+            `INSERT INTO ccos_interaction_sources (workspace_id, interaction_id, source_type, source_id)
+             VALUES ($1, $2, $3, $4)`,
+            [input.workspaceId, interaction.id, link.sourceType, link.sourceId],
+          );
+        }
+      }
+
+      await client.query('COMMIT');
+      return interaction;
+    } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+  }
+
+  async listInteractions(workspaceId: string, partnershipId: string): Promise<CCOSInteractionRecord[]> {
+    const result = await this.pool.query<InteractionRow>(
+      `SELECT ${INTERACTION_COLUMNS} FROM ccos_interactions
+       WHERE workspace_id = $1 AND partnership_id = $2
+       ORDER BY occurred_at DESC, created_at DESC`,
+      [workspaceId, partnershipId],
+    );
+    return result.rows.map(mapInteraction);
+  }
+
+  async listTimeline(workspaceId: string, partnershipId: string): Promise<Array<CCOSInteractionRecord & { sources: CCOInteractionSourceRecord[] }>> {
+    const interactions = await this.listInteractions(workspaceId, partnershipId);
+    const interactionIds = interactions.map(i => i.id);
+    if (interactionIds.length === 0) return [];
+
+    const placeholders = interactionIds.map((_, i) => `$${i + 2}`).join(',');
+    const sourcesResult = await this.pool.query<InteractionSourceRow>(
+      `SELECT id, workspace_id, interaction_id, source_type, source_id, created_at
+       FROM ccos_interaction_sources WHERE workspace_id = $1 AND interaction_id IN (${placeholders})`,
+      [workspaceId, ...interactionIds],
+    );
+
+    const sourcesByInteraction = new Map<string, CCOInteractionSourceRecord[]>();
+    for (const row of sourcesResult.rows) {
+      const arr = sourcesByInteraction.get(row.interaction_id) ?? [];
+      arr.push(mapInteractionSource(row));
+      sourcesByInteraction.set(row.interaction_id, arr);
+    }
+
+    return interactions.map(interaction => ({
+      ...interaction,
+      sources: sourcesByInteraction.get(interaction.id) ?? [],
+    }));
+  }
+
+  async getInteractionSources(workspaceId: string, interactionId: string): Promise<CCOInteractionSourceRecord[]> {
+    const result = await this.pool.query<InteractionSourceRow>(
+      `SELECT id, workspace_id, interaction_id, source_type, source_id, created_at
+       FROM ccos_interaction_sources WHERE workspace_id = $1 AND interaction_id = $2`,
+      [workspaceId, interactionId],
+    );
+    return result.rows.map(mapInteractionSource);
+  }
+
+  // Template Version methods
+  async createTemplateVersion(input: CreateCCOSTemplateVersionInput): Promise<CCOSTemplateVersionRecord> {
+    assertTemplateDefinition(input.subject, input.body, input.variables ?? []);
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      // Serialize allocation even when there is no prior version to row-lock.
+      const workspace = await client.query('SELECT id FROM workspaces WHERE id = $1 FOR UPDATE', [input.workspaceId]);
+      if (workspace.rowCount !== 1) throw new Error('CCOS workspace not found');
+      const versionResult = await client.query<{ max_version: number }>(
+        `SELECT COALESCE(MAX(version), 0) + 1 AS max_version FROM ccos_template_versions WHERE workspace_id = $1 AND type = $2`,
+        [input.workspaceId, input.type],
+      );
+      const nextVersion = versionResult.rows[0].max_version;
+      const result = await client.query<TemplateVersionRow>(
+        `INSERT INTO ccos_template_versions (workspace_id, type, version, subject, body, variables)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING ${TEMPLATE_VERSION_COLUMNS}`,
+        [input.workspaceId, input.type, nextVersion, input.subject, input.body, JSON.stringify(input.variables ?? [])],
+      );
+      if (result.rowCount !== 1) throw new Error('CCOS template version insert did not return exactly one row');
+      await client.query('COMMIT');
+      return mapTemplateVersion(result.rows[0]);
+    } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+  }
+
+  async getTemplateVersion(workspaceId: string, templateVersionId: string): Promise<CCOSTemplateVersionRecord | null> {
+    const result = await this.pool.query<TemplateVersionRow>(
+      `SELECT ${TEMPLATE_VERSION_COLUMNS} FROM ccos_template_versions WHERE workspace_id = $1 AND id = $2`,
+      [workspaceId, templateVersionId],
+    );
+    return result.rows[0] ? mapTemplateVersion(result.rows[0]) : null;
+  }
+
+  async listTemplateVersions(workspaceId: string, type?: CCOSTemplateType): Promise<CCOSTemplateVersionRecord[]> {
+    const values: unknown[] = [workspaceId];
+    const typePredicate = type === undefined ? '' : ' AND type = $2';
+    if (type !== undefined) values.push(type);
+    const result = await this.pool.query<TemplateVersionRow>(
+      `SELECT ${TEMPLATE_VERSION_COLUMNS} FROM ccos_template_versions WHERE workspace_id = $1${typePredicate}
+       ORDER BY type, version DESC, created_at DESC`, values,
+    );
+    return result.rows.map(mapTemplateVersion);
+  }
+
+  async getLatestTemplateVersion(workspaceId: string, type: CCOSTemplateType): Promise<CCOSTemplateVersionRecord | null> {
+    const result = await this.pool.query<TemplateVersionRow>(
+      `SELECT ${TEMPLATE_VERSION_COLUMNS} FROM ccos_template_versions WHERE workspace_id = $1 AND type = $2
+       ORDER BY version DESC LIMIT 1`, [workspaceId, type],
+    );
+    return result.rows[0] ? mapTemplateVersion(result.rows[0]) : null;
+  }
+
+  renderTemplate(template: CCOSTemplateVersionRecord, context: Record<string, string>): { subject: string; body: string } {
+    assertTemplateDefinition(template.subject, template.body, template.variables);
+    const expected = new Set(template.variables);
+    const received = new Set(Object.keys(context));
+    const missing = [...expected].filter((key) => !received.has(key));
+    const extra = [...received].filter((key) => !expected.has(key));
+    if (missing.length > 0 || extra.length > 0) {
+      throw new Error(`Invalid CCOS template render: context mismatch (missing: ${missing.join(',')}; extra: ${extra.join(',')})`);
+    }
+    const replaceVars = (text: string): string => {
+      return text.replace(/\{\{(\w+)\}\}/g, (_match, key: string) => context[key]);
+    };
+    const rendered = {
+      subject: replaceVars(template.subject),
+      body: replaceVars(template.body),
+    };
+    if (/\{\{\w+\}\}/.test(rendered.subject) || /\{\{\w+\}\}/.test(rendered.body)) {
+      throw new Error('Invalid CCOS template render: unresolved placeholder');
+    }
+    return rendered;
+  }
+
+
   async close(): Promise<void> { if (this.ownsPool) await this.pool.end(); }
+}
+
+export type CCOSTemplateType =
+  | 'invite_first_contact'
+  | 'partnership_confirm'
+  | 'sample_confirm'
+  | 'receipt'
+  | 'publication'
+  | 'ad_auth'
+  | 'followup_performance';
+
+export interface CreateCCOSTemplateVersionInput {
+  workspaceId: string;
+  type: CCOSTemplateType;
+  subject: string;
+  body: string;
+  variables?: string[];
+}
+
+function extractTemplateVariables(subject: string, body: string): string[] {
+  const variables = new Set<string>();
+  for (const text of [subject, body]) {
+    for (const match of text.matchAll(/\{\{(\w+)\}\}/g)) variables.add(match[1]);
+  }
+  return [...variables].sort();
+}
+
+function assertTemplateDefinition(subject: string, body: string, declaredVariables: string[]): void {
+  const withoutValidPlaceholders = `${subject}\n${body}`.replace(/\{\{\w+\}\}/g, '');
+  if (withoutValidPlaceholders.includes('{{') || withoutValidPlaceholders.includes('}}')) {
+    throw new Error('Invalid CCOS template definition: malformed placeholder');
+  }
+  const actual = extractTemplateVariables(subject, body);
+  const declared = [...new Set(declaredVariables)].sort();
+  if (declared.length !== declaredVariables.length || actual.join('\0') !== declared.join('\0')) {
+    throw new Error('Invalid CCOS template definition: declared variables must exactly match placeholders');
+  }
+}
+
+export interface CCOSTemplateVersionRecord {
+  id: string;
+  workspaceId: string;
+  type: CCOSTemplateType;
+  version: number;
+  subject: string;
+  body: string;
+  variables: string[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface CCOInteractionSourceRecord {
+  id: string;
+  workspaceId: string;
+  interactionId: string;
+  sourceType: string;
+  sourceId: string;
+  createdAt: Date;
+}
+
+export interface CreateCCOSInteractionInput {
+  workspaceId: string;
+  partnershipId: string;
+  direction: 'inbound' | 'outbound' | 'system';
+  channel: string;
+  summary: string;
+  occurredAt?: Date;
+  source?: string;
+  templateVersionId?: string;
+  sourceLinks?: Array<{ sourceType: CCOSInteractionSourceType; sourceId: string }>;
+}
+
+export type CCOSInteractionSourceType = 'product' | 'content' | 'partnership' | 'action' | 'template_version';
+
+export interface CCOSInteractionRecord {
+  id: string;
+  workspaceId: string;
+  partnershipId: string;
+  direction: 'inbound' | 'outbound' | 'system';
+  channel: string;
+  summary: string;
+  occurredAt: Date;
+  source: string;
+  createdAt: Date;
+  templateVersionId: string | null;
+}
+
+type TemplateVersionRow = {
+  id: string; workspace_id: string; type: CCOSTemplateType; version: number;
+  subject: string; body: string; variables: string[]; created_at: Date; updated_at: Date;
+};
+
+type TemplateUsageRow = {
+  id: string; workspace_id: string; template_version_id: string; interaction_id: string; used_at: Date;
+};
+
+type InteractionSourceRow = {
+  id: string; workspace_id: string; interaction_id: string; source_type: string; source_id: string; created_at: Date;
+};
+
+type InteractionRow = {
+  id: string; workspace_id: string; partnership_id: string; direction: string;
+  channel: string; summary: string; occurred_at: Date; source: string; created_at: Date; template_version_id: string | null;
+};
+
+const TEMPLATE_VERSION_COLUMNS = 'id, workspace_id, type, version, subject, body, variables, created_at, updated_at';
+const INTERACTION_COLUMNS = 'id, workspace_id, partnership_id, direction, channel, summary, occurred_at, source, created_at, template_version_id';
+
+function mapTemplateVersion(row: TemplateVersionRow): CCOSTemplateVersionRecord {
+  return {
+    id: row.id, workspaceId: row.workspace_id, type: row.type, version: row.version,
+    subject: row.subject, body: row.body, variables: row.variables,
+    createdAt: row.created_at, updatedAt: row.updated_at,
+  };
+}
+
+function mapInteraction(row: InteractionRow): CCOSInteractionRecord {
+  return {
+    id: row.id, workspaceId: row.workspace_id, partnershipId: row.partnership_id,
+    direction: row.direction as 'inbound' | 'outbound' | 'system',
+    channel: row.channel, summary: row.summary, occurredAt: row.occurred_at,
+    source: row.source, createdAt: row.created_at, templateVersionId: row.template_version_id,
+  };
+}
+
+function mapInteractionSource(row: InteractionSourceRow): CCOInteractionSourceRecord {
+  return {
+    id: row.id, workspaceId: row.workspace_id, interactionId: row.interaction_id,
+    sourceType: row.source_type, sourceId: row.source_id, createdAt: row.created_at,
+  };
 }
