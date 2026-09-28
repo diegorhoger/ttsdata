@@ -195,8 +195,24 @@ const createTemplateSchema = z.object({
   type: templateTypeEnum,
   subject: z.string().trim().min(1).max(512),
   body: z.string().min(1).max(50_000),
-  variables: z.array(z.string().trim().min(1).max(128)).optional(),
-}).strict();
+  variables: z.array(z.string().trim().regex(/^\w+$/).max(128)).optional(),
+}).strict().superRefine((template, context) => {
+  const actual = new Set<string>();
+  for (const text of [template.subject, template.body]) {
+    for (const match of text.matchAll(/\{\{(\w+)\}\}/g)) actual.add(match[1]);
+  }
+  const declared = template.variables ?? [];
+  const declaredSet = new Set(declared);
+  if (declaredSet.size !== declared.length ||
+      [...actual].some((variable) => !declaredSet.has(variable)) ||
+      declared.some((variable) => !actual.has(variable))) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['variables'],
+      message: 'Declared variables must exactly match subject and body placeholders',
+    });
+  }
+});
 const createInteractionSchema = z.object({
   partnershipId: z.string().uuid(),
   // This route records inbound history only. Outbound events require the

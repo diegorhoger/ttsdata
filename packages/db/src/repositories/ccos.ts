@@ -851,8 +851,10 @@ export class CCOSRepository {
           template_version: `SELECT id FROM ccos_template_versions WHERE workspace_id = $1 AND id = $2 FOR SHARE`,
         };
         if (!Object.hasOwn(sourceQuery, link.sourceType)) throw new Error('Invalid CCOS interaction source type');
-        const source = await client.query(sourceQuery[link.sourceType],
-          [input.workspaceId, link.sourceId, input.partnershipId]);
+        const sourceParams = link.sourceType === 'template_version'
+          ? [input.workspaceId, link.sourceId]
+          : [input.workspaceId, link.sourceId, input.partnershipId];
+        const source = await client.query(sourceQuery[link.sourceType], sourceParams);
         if (source.rowCount !== 1) throw new Error('CCOS interaction source not found in partnership/workspace');
       }
       const occurredAt = input.occurredAt ?? new Date();
@@ -936,6 +938,7 @@ export class CCOSRepository {
 
   // Template Version methods
   async createTemplateVersion(input: CreateCCOSTemplateVersionInput): Promise<CCOSTemplateVersionRecord> {
+    assertTemplateDefinition(input.subject, input.body, input.variables ?? []);
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
@@ -986,13 +989,25 @@ export class CCOSRepository {
   }
 
   renderTemplate(template: CCOSTemplateVersionRecord, context: Record<string, string>): { subject: string; body: string } {
+    assertTemplateDefinition(template.subject, template.body, template.variables);
+    const expected = new Set(template.variables);
+    const received = new Set(Object.keys(context));
+    const missing = [...expected].filter((key) => !received.has(key));
+    const extra = [...received].filter((key) => !expected.has(key));
+    if (missing.length > 0 || extra.length > 0) {
+      throw new Error(`Invalid CCOS template render: context mismatch (missing: ${missing.join(',')}; extra: ${extra.join(',')})`);
+    }
     const replaceVars = (text: string): string => {
-      return text.replace(/\{\{(\w+)\}\}/g, (match, key) => context[key] ?? match);
+      return text.replace(/\{\{(\w+)\}\}/g, (_match, key: string) => context[key]);
     };
-    return {
+    const rendered = {
       subject: replaceVars(template.subject),
       body: replaceVars(template.body),
     };
+    if (/\{\{\w+\}\}/.test(rendered.subject) || /\{\{\w+\}\}/.test(rendered.body)) {
+      throw new Error('Invalid CCOS template render: unresolved placeholder');
+    }
+    return rendered;
   }
 
 
@@ -1014,6 +1029,22 @@ export interface CreateCCOSTemplateVersionInput {
   subject: string;
   body: string;
   variables?: string[];
+}
+
+function extractTemplateVariables(subject: string, body: string): string[] {
+  const variables = new Set<string>();
+  for (const text of [subject, body]) {
+    for (const match of text.matchAll(/\{\{(\w+)\}\}/g)) variables.add(match[1]);
+  }
+  return [...variables].sort();
+}
+
+function assertTemplateDefinition(subject: string, body: string, declaredVariables: string[]): void {
+  const actual = extractTemplateVariables(subject, body);
+  const declared = [...new Set(declaredVariables)].sort();
+  if (declared.length !== declaredVariables.length || actual.join('\0') !== declared.join('\0')) {
+    throw new Error('Invalid CCOS template definition: declared variables must exactly match placeholders');
+  }
 }
 
 export interface CCOSTemplateVersionRecord {

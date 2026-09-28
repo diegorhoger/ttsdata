@@ -494,13 +494,20 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
   it('allocates immutable template versions concurrently and round-trips JSON variables', async () => {
     const created = await Promise.all(Array.from({ length: 5 }, (_, index) => repository.createTemplateVersion({
       workspaceId: workspaceA, type: 'receipt', subject: `Receipt ${index}`,
-      body: 'Hello {{store_name}}', variables: ['store_name', 'product_name'],
+      body: 'Hello {{store_name}} about {{product_name}}', variables: ['store_name', 'product_name'],
     })));
     expect(created.map((row) => row.version).sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5]);
     expect(created[0].variables).toEqual(['store_name', 'product_name']);
     expect(await repository.getTemplateVersion(workspaceB, created[0].id)).toBeNull();
     expect((await repository.getLatestTemplateVersion(workspaceA, 'receipt'))?.version).toBe(5);
     expect(await repository.listTemplateVersions(workspaceB, 'receipt')).toEqual([]);
+    expect(repository.renderTemplate(created[0], { store_name: 'Shop', product_name: 'Serum' }))
+      .toEqual({ subject: 'Receipt 0', body: 'Hello Shop about Serum' });
+    expect(() => repository.renderTemplate(created[0], { store_name: 'Shop' }))
+      .toThrow('Invalid CCOS template render');
+    await expect(repository.createTemplateVersion({
+      workspaceId: workspaceA, type: 'receipt', subject: 'Broken', body: 'Hello {{name}}', variables: [],
+    })).rejects.toThrow('Invalid CCOS template definition');
   });
 
   it('records template usage and validated sources in the partnership timeline atomically', async () => {

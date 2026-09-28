@@ -917,6 +917,25 @@ describe('CCOS interactions and template routes', () => {
     expect(repository.createInteraction).not.toHaveBeenCalled();
   });
 
+  it('rejects template definitions whose declared variables differ from their placeholders', async () => {
+    const repository = createRepository();
+    const app = await buildApp(repository);
+    apps.push(app);
+
+    const undeclared = await app.inject({
+      method: 'POST', url: '/api/ccos/templates',
+      payload: { type: 'receipt', subject: 'Hello', body: 'Hi {{name}}', variables: [] },
+    });
+    const unused = await app.inject({
+      method: 'POST', url: '/api/ccos/templates',
+      payload: { type: 'receipt', subject: 'Hello', body: 'Hi', variables: ['name'] },
+    });
+
+    expect(undeclared.statusCode).toBe(400);
+    expect(unused.statusCode).toBe(400);
+    expect(repository.createTemplateVersion).not.toHaveBeenCalled();
+  });
+
   it('rejects missing and extra render variables before rendering', async () => {
     const repository = createRepository();
     const app = await buildApp(repository, 'viewer');
