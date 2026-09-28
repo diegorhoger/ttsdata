@@ -391,6 +391,8 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
     await expect(repository.getContent(workspaceA, second.id)).resolves.toMatchObject({
       adAuthorizationStatus: null, adAuthorizationCode: null,
     });
+    await expect(repository.updateContent(workspaceA, second.id, { status: 'ads_authorized' }))
+      .rejects.toThrow('ads_authorized status requires authorized details');
     const pendingActions = await pool.query<{ rule_key: string; status: string; content_id: string }>(
       `SELECT rule_key, status, content_id FROM ccos_next_actions
         WHERE workspace_id = $1 AND content_id = $2 AND rule_key LIKE 'content.ad-auth.%'`,
@@ -420,16 +422,22 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
       adAuthorizationStatus: 'authorized', adAuthorizationCode: 'MANUAL-CODE-1',
       adAuthorizationCreatedAt: createdAt, adAuthorizationExpiresAt: expiresAt,
     });
-    const authorizationActions = await pool.query<{ rule_key: string; due_at: Date | null; status: string }>(
-      `SELECT rule_key, due_at, status FROM ccos_next_actions
+    const authorizationActions = await pool.query<{ id: string; rule_key: string; due_at: Date | null; status: string }>(
+      `SELECT id, rule_key, due_at, status FROM ccos_next_actions
         WHERE workspace_id = $1 AND content_id = $2 AND rule_key LIKE 'content.ad-auth.%'
           AND status IN ('open', 'in_progress', 'waiting') ORDER BY rule_key`,
       [workspaceA, first.id],
     );
-    expect(authorizationActions.rows).toEqual([
+    expect(authorizationActions.rows.map(({ rule_key, due_at, status }) => ({ rule_key, due_at, status }))).toEqual([
       { rule_key: 'content.ad-auth.expiry', due_at: expiresAt, status: 'open' },
       { rule_key: 'content.ad-auth.share', due_at: null, status: 'open' },
     ]);
+    const shareAction = authorizationActions.rows.find((row) => row.rule_key === 'content.ad-auth.share')!;
+    await expect(repository.updateNextAction(workspaceA, shareAction.id, { status: 'completed' }))
+      .rejects.toThrow('resolved only by a target lifecycle transition');
+    await expect(repository.updateNextAction(workspaceA, shareAction.id, {
+      status: 'completed', resolutionReason: 'Authorization code shared manually',
+    })).resolves.toMatchObject({ status: 'completed', resolutionReason: 'Authorization code shared manually' });
 
     await expect(repository.updateContent(workspaceA, first.id, {
       adAuthorizationExpiresAt: new Date('2026-08-01T00:00:00.000Z'),
@@ -454,6 +462,11 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
 
     await expect(pool.query(
       `UPDATE ccos_contents SET ad_authorization_status = 'pending', ad_authorization_code = 'STALE'
+        WHERE workspace_id = $1 AND id = $2`,
+      [workspaceA, second.id],
+    )).rejects.toMatchObject({ code: '23514' });
+    await expect(pool.query(
+      `UPDATE ccos_contents SET status = 'ads_authorized'
         WHERE workspace_id = $1 AND id = $2`,
       [workspaceA, second.id],
     )).rejects.toMatchObject({ code: '23514' });

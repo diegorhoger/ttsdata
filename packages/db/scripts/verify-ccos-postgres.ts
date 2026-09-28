@@ -207,10 +207,11 @@ async function assertForwardSchema(): Promise<void> {
     `SELECT conname FROM pg_constraint
       WHERE conrelid = 'public.ccos_contents'::regclass
         AND conname = ANY($1::text[]) AND contype = 'c' AND convalidated = true`,
-    [['ccos_contents_ad_authorization_details', 'ccos_contents_ad_authorization_expiry']],
+    [['ccos_contents_ad_authorization_details', 'ccos_contents_ad_authorization_expiry',
+      'ccos_contents_ads_authorized_lifecycle']],
   );
-  if (authorizationChecks.rowCount !== 2) {
-    throw new Error(`Expected two validated ad authorization checks, found ${authorizationChecks.rowCount ?? 0}`);
+  if (authorizationChecks.rowCount !== 3) {
+    throw new Error(`Expected three validated ad authorization checks, found ${authorizationChecks.rowCount ?? 0}`);
   }
 
   const foreignKeys = await pool.query<{

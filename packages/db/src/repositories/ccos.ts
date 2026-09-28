@@ -495,8 +495,13 @@ export class CCOSRepository {
       );
       const current = selected.rows[0] ? mapNextAction(selected.rows[0]) : null;
       if (!current) { await client.query('ROLLBACK'); return null; }
+      const manuallyCompletableAuthorizationAction = current.generatedAutomatically
+        && current.ruleKey?.startsWith('content.ad-auth.')
+        && input.status === 'completed'
+        && Boolean(input.resolutionReason);
       if (current.generatedAutomatically && input.status !== undefined
-        && ['completed', 'cancelled'].includes(input.status)) {
+        && ['completed', 'cancelled'].includes(input.status)
+        && !manuallyCompletableAuthorizationAction) {
         throw new Error('Generated CCOS next actions are resolved only by a target lifecycle transition');
       }
       if (input.status !== undefined && input.status !== current.status
@@ -864,6 +869,9 @@ export class CCOSRepository {
       if (effectiveAdAuthorizationStatus !== 'authorized'
         && (effectiveAdAuthorizationCode || effectiveAdAuthorizationCreatedAt || effectiveAdAuthorizationExpiresAt)) {
         throw new Error('Invalid CCOS content ad authorization: pending, unavailable, or unset status cannot retain authorization details');
+      }
+      if (effectiveStatus === 'ads_authorized' && effectiveAdAuthorizationStatus !== 'authorized') {
+        throw new Error('Invalid CCOS content ad authorization: ads_authorized status requires authorized details');
       }
       if (effectiveAdAuthorizationCreatedAt && effectiveAdAuthorizationExpiresAt
         && effectiveAdAuthorizationExpiresAt < effectiveAdAuthorizationCreatedAt) {

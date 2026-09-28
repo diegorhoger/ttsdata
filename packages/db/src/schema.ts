@@ -471,6 +471,9 @@ export const ccosContents = pgTable('ccos_contents', {
   adAuthorizationExpiry: check('ccos_contents_ad_authorization_expiry', sql`
     ${t.adAuthorizationExpiresAt} IS NULL OR ${t.adAuthorizationExpiresAt} >= ${t.adAuthorizationCreatedAt}
   `),
+  adsAuthorizedLifecycle: check('ccos_contents_ads_authorized_lifecycle', sql`
+    ${t.status} <> 'ads_authorized' OR ${t.adAuthorizationStatus} = 'authorized'
+  `),
 }));
 
 export const ccosInteractions = pgTable('ccos_interactions', {

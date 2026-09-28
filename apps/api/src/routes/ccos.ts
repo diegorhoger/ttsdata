@@ -152,6 +152,14 @@ const updateContentSchema = z.object({
       message: 'Pending or unavailable authorization cannot include code or timestamps',
     });
   }
+  if (body.status === 'ads_authorized' && body.adAuthorizationStatus
+    && body.adAuthorizationStatus !== 'authorized') {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['status'],
+      message: 'ads_authorized requires authorized ad-authorization details',
+    });
+  }
 });
 
 const actionTargetSchema = z.discriminatedUnion('type', [
