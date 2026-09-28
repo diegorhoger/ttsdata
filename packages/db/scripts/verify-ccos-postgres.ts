@@ -85,6 +85,7 @@ if (!parsedUrl.pathname.slice(1).endsWith('_test')) {
 const packageRoot = resolve(process.cwd());
 const migrationsFolder = resolve(packageRoot, 'drizzle');
 const rollbackPaths = [
+  resolve(migrationsFolder, 'rollback/0005_free_human_robot.down.sql'),
   resolve(migrationsFolder, 'rollback/0004_brainy_black_bird.down.sql'),
   resolve(migrationsFolder, 'rollback/0003_silly_otto_octavius.down.sql'),
   resolve(migrationsFolder, 'rollback/0002_worried_lyja.down.sql'),
@@ -122,7 +123,7 @@ async function getMigrationCreatedAt(): Promise<number[]> {
   const journal = JSON.parse(await readFile(journalPath, 'utf8')) as {
     entries?: Array<{ tag?: string; when?: number }>;
   };
-  const tags = ['0002_worried_lyja', '0003_silly_otto_octavius', '0004_brainy_black_bird'];
+  const tags = ['0002_worried_lyja', '0003_silly_otto_octavius', '0004_brainy_black_bird', '0005_free_human_robot'];
   const entries = tags.map((tag) => journal.entries?.find((entry) => entry.tag === tag));
   if (entries.some((entry) => !entry || typeof entry.when !== 'number')) {
     throw new Error('Migration journal is missing a CCOS migration entry');
@@ -265,8 +266,8 @@ async function main(): Promise<void> {
       'DELETE FROM drizzle.__drizzle_migrations WHERE created_at = ANY($1::bigint[]) RETURNING id',
       [migrationCreatedAt],
     );
-    if (deleted.rowCount !== 3) {
-      throw new Error(`Expected three CCOS migration journal rows, removed ${deleted.rowCount ?? 0}`);
+    if (deleted.rowCount !== 4) {
+      throw new Error(`Expected four CCOS migration journal rows, removed ${deleted.rowCount ?? 0}`);
     }
     await client.query('COMMIT');
   } catch (error) {

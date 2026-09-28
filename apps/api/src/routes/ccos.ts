@@ -3,15 +3,20 @@ import { z } from 'zod';
 import {
   CCOSRepository,
   type CCOSContentRecord,
+  type CCOSInteractionRecord,
+  type CCOInteractionSourceRecord,
   type CCOSNextActionRecord,
   type CCOSPartnershipRecord,
   type CCOSProductRecord,
   type CCOSStoreRecord,
+  type CCOSTemplateVersionRecord,
   type CreateCCOSPartnershipInput,
   type CreateCCOSContentInput,
+  type CreateCCOSInteractionInput,
   type CreateCCOSNextActionInput,
   type CreateCCOSProductInput,
   type CreateCCOSStoreInput,
+  type CreateCCOSTemplateVersionInput,
   type UpdateCCOSPartnershipInput,
   type UpdateCCOSContentInput,
   type UpdateCCOSNextActionInput,
@@ -160,6 +165,35 @@ const updateNextActionSchema = z.object({
   resolutionReason: z.string().trim().min(1).max(2_000).nullable().optional(),
 }).strict().refine((body) => Object.keys(body).length > 0, 'At least one field is required');
 
+const templateTypeEnum = z.enum([
+  'invite_first_contact', 'partnership_confirm', 'sample_confirm', 'receipt',
+  'publication', 'ad_auth', 'followup_performance',
+]);
+const interactionDirectionEnum = z.enum(['inbound', 'outbound', 'system']);
+const createTemplateSchema = z.object({
+  type: templateTypeEnum,
+  subject: z.string().trim().min(1).max(512),
+  body: z.string().min(1).max(50_000),
+  variables: z.array(z.string().trim().min(1).max(128)).optional(),
+}).strict();
+const createInteractionSchema = z.object({
+  partnershipId: z.string().uuid(),
+  direction: interactionDirectionEnum,
+  channel: z.string().trim().min(1).max(64),
+  summary: z.string().min(1).max(2_000),
+  occurredAt: z.preprocess(
+    (value) => typeof value === 'string' ? new Date(value) : value,
+    z.date().optional(),
+  ),
+  templateVersionId: z.string().uuid().optional(),
+  sourceLinks: z.array(
+    z.object({
+      sourceType: z.enum(['product', 'content', 'partnership', 'action', 'template_version']),
+      sourceId: z.string().uuid(),
+    }).strict(),
+  ).optional(),
+}).strict();
+
 type StorePartnershipRepository = {
   createStore(input: CreateCCOSStoreInput): Promise<CCOSStoreRecord>;
   listStores(workspaceId: string): Promise<CCOSStoreRecord[]>;
@@ -197,6 +231,15 @@ type StorePartnershipRepository = {
     actionId: string,
     input: UpdateCCOSNextActionInput,
   ): Promise<CCOSNextActionRecord | null>;
+  createInteraction(input: CreateCCOSInteractionInput): Promise<CCOSInteractionRecord>;
+  listInteractions(workspaceId: string, partnershipId: string): Promise<CCOSInteractionRecord[]>;
+  listTimeline(workspaceId: string, partnershipId: string): Promise<Array<CCOSInteractionRecord & { sources: CCOInteractionSourceRecord[] }>>;
+  getInteractionSources(workspaceId: string, interactionId: string): Promise<CCOInteractionSourceRecord[]>;
+  createTemplateVersion(input: CreateCCOSTemplateVersionInput): Promise<CCOSTemplateVersionRecord>;
+  getTemplateVersion(workspaceId: string, templateVersionId: string): Promise<CCOSTemplateVersionRecord | null>;
+  listTemplateVersions(workspaceId: string, type?: string): Promise<CCOSTemplateVersionRecord[]>;
+  getLatestTemplateVersion(workspaceId: string, type: string): Promise<CCOSTemplateVersionRecord | null>;
+  renderTemplate(template: CCOSTemplateVersionRecord, context: Record<string, string>): { subject: string; body: string };
 };
 
 function parse<T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, input: unknown): T {
@@ -441,4 +484,93 @@ export async function registerCCOSRoutes(app: FastifyInstance, options: CCOSRout
       throw error;
     }
   });
+
+  // Interaction timeline and template routes
+  app.get('/partnerships/:partnershipId/interactions', { preHandler: authenticate }, async (request, reply) => {
+    const { partnershipId } = parse(partnershipParamsSchema, request.params);
+    const interactions = await repository.listInteractions(request.auth!.workspaceId, partnershipId);
+    return reply.send({ interactions });
+  });
+
+  app.get('/partnerships/:partnershipId/timeline', { preHandler: authenticate }, async (request, reply) => {
+    const { partnershipId } = parse(partnershipParamsSchema, request.params);
+    const timeline = await repository.listTimeline(request.auth!.workspaceId, partnershipId);
+    return reply.send({ timeline });
+  });
+
+  app.post('/interactions', { preHandler: [authenticate, authorizeWorkspaceWrite] }, async (request, reply) => {
+    const body = parse(createInteractionSchema, request.body);
+    const interaction = await repository.createInteraction({
+      workspaceId: request.auth!.workspaceId,
+      partnershipId: body.partnershipId,
+      direction: body.direction,
+      channel: body.channel,
+      summary: body.summary,
+      occurredAt: body.occurredAt,
+      templateVersionId: body.templateVersionId,
+      sourceLinks: body.sourceLinks,
+    });
+    return reply.status(201).send({ interaction });
+  });
+
+  app.get('/interactions/:interactionId/sources', { preHandler: authenticate }, async (request, reply) => {
+    const { interactionId } = parse(z.object({ interactionId: z.string().uuid() }).strict(), request.params);
+    const sources = await repository.getInteractionSources(request.auth!.workspaceId, interactionId);
+    return reply.send({ sources });
+  });
+
+  // Template version routes
+  app.post('/templates', { preHandler: [authenticate, authorizeWorkspaceWrite] }, async (request, reply) => {
+    const body = parse(createTemplateSchema, request.body);
+    const templateVersion = await repository.createTemplateVersion({
+      workspaceId: request.auth!.workspaceId,
+      type: body.type,
+      subject: body.subject,
+      body: body.body,
+      variables: body.variables,
+    });
+    return reply.status(201).send({ templateVersion });
+  });
+
+  app.get('/templates', { preHandler: authenticate }, async (request, reply) => {
+    const query = parse(
+      z.object({ type: templateTypeEnum.optional() }).strict(),
+      request.query,
+    );
+    const templateVersions = await repository.listTemplateVersions(request.auth!.workspaceId, query.type);
+    return reply.send({ templateVersions });
+  });
+
+  app.get('/templates/:templateVersionId', { preHandler: authenticate }, async (request, reply) => {
+    const { templateVersionId } = parse(
+      z.object({ templateVersionId: z.string().uuid() }).strict(),
+      request.params,
+    );
+    const templateVersion = await repository.getTemplateVersion(request.auth!.workspaceId, templateVersionId);
+    if (!templateVersion) throw new AppError('Template version not found', 404, 'NOT_FOUND');
+    return reply.send({ templateVersion });
+  });
+
+  app.get('/templates/type/:type', { preHandler: authenticate }, async (request, reply) => {
+    const { type } = parse(z.object({ type: templateTypeEnum }).strict(), request.params);
+    const templateVersion = await repository.getLatestTemplateVersion(request.auth!.workspaceId, type);
+    if (!templateVersion) throw new AppError('Template version not found', 404, 'NOT_FOUND');
+    return reply.send({ templateVersion });
+  });
+
+  app.post('/templates/:templateVersionId/render', { preHandler: authenticate }, async (request, reply) => {
+    const { templateVersionId } = parse(
+      z.object({ templateVersionId: z.string().uuid() }).strict(),
+      request.params,
+    );
+    const templateVersion = await repository.getTemplateVersion(request.auth!.workspaceId, templateVersionId);
+    if (!templateVersion) throw new AppError('Template version not found', 404, 'NOT_FOUND');
+    const context = parse(
+      z.record(z.string()),
+      request.body,
+    );
+    const rendered = repository.renderTemplate(templateVersion, context);
+    return reply.send({ rendered });
+  });
+
 }

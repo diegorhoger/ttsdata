@@ -12,6 +12,8 @@ const PARTNERSHIP_ID = '33333333-3333-4333-8333-333333333333';
 const PRODUCT_ID = '55555555-5555-4555-8555-555555555555';
 const CONTENT_ID = '66666666-6666-4666-8666-666666666666';
 const ACTION_ID = '77777777-7777-4777-8777-777777777777';
+const INTERACTION_ID = '88888888-8888-4888-8888-888888888888';
+const TEMPLATE_ID = '99999999-9999-4999-8999-999999999999';
 const NOW = new Date('2026-09-27T12:00:00.000Z');
 
 const store = {
@@ -93,6 +95,31 @@ const nextAction = {
   updatedAt: NOW,
 };
 
+const interaction = {
+  id: INTERACTION_ID,
+  workspaceId: WORKSPACE_ID,
+  partnershipId: PARTNERSHIP_ID,
+  direction: 'outbound' as const,
+  channel: 'email',
+  summary: 'Sent partnership proposal via email',
+  occurredAt: NOW,
+  source: 'manual',
+  createdAt: NOW,
+  templateVersionId: TEMPLATE_ID,
+};
+
+const templateVersion = {
+  id: TEMPLATE_ID,
+  workspaceId: WORKSPACE_ID,
+  type: 'invite_first_contact' as const,
+  version: 1,
+  subject: 'Partnership Proposal',
+  body: 'Hi {{partner_name}}, we want to collaborate.',
+  variables: ['partner_name', 'product_name'],
+  createdAt: NOW,
+  updatedAt: NOW,
+};
+
 function createRepository() {
   return {
     createStore: vi.fn().mockResolvedValue(store),
@@ -115,6 +142,15 @@ function createRepository() {
     listAttentionInbox: vi.fn().mockResolvedValue([nextAction]),
     getNextAction: vi.fn().mockResolvedValue(nextAction),
     updateNextAction: vi.fn().mockResolvedValue(nextAction),
+    createInteraction: vi.fn().mockResolvedValue(interaction),
+    listInteractions: vi.fn().mockResolvedValue([interaction]),
+    listTimeline: vi.fn().mockResolvedValue([{ ...interaction, sources: [] }]),
+    getInteractionSources: vi.fn().mockResolvedValue([]),
+    createTemplateVersion: vi.fn().mockResolvedValue(templateVersion),
+    getTemplateVersion: vi.fn().mockResolvedValue(templateVersion),
+    listTemplateVersions: vi.fn().mockResolvedValue([templateVersion]),
+    getLatestTemplateVersion: vi.fn().mockResolvedValue(templateVersion),
+    renderTemplate: vi.fn().mockReturnValue({ subject: 'Partnership Proposal', body: 'Hi Brand, we want to collaborate.' }),
   };
 }
 
