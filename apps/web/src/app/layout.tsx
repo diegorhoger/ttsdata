@@ -4,6 +4,11 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'TTSData - Análise de Performance para Criadores TikTok',
   description: 'Performance analytics for TikTok creators using authorized Display API data.',
+  icons: {
+    icon: '/favicon-32x32.png',
+    shortcut: '/favicon-32x32.png',
+    apple: '/apple-touch-icon.png',
+  },
 };
 
 export default function RootLayout({
@@ -16,7 +21,8 @@ export default function RootLayout({
       <body className="min-h-screen bg-slate-50">
         <header className="border-b border-slate-200 bg-white">
           <div className="mx-auto max-w-7xl px-4 py-4 flex items-center justify-between">
-            <a href="/" className="text-xl font-bold text-sky-600">
+            <a href="/" className="flex items-center gap-2 text-xl font-bold text-sky-600">
+              <img src="/ttsdata-icon.png" alt="TTSData" className="h-6 w-6" />
               TTSData
             </a>
             <nav className="flex gap-6 text-sm font-medium text-slate-600">
