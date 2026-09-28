@@ -11,14 +11,17 @@ export { OAuthRepository, type OAuthConfig } from './repositories/oauth';
 export {
   CCOSRepository,
   type CCOSPartnershipRecord,
+  type CCOSContentRecord,
   type CCOSProductRecord,
   type CCOSPriority,
   type CCOSStoreRecord,
   type CreateCCOSPartnershipInput,
+  type CreateCCOSContentInput,
   type CreateCCOSProductInput,
   type CreateCCOSStoreInput,
   type PartnershipType,
   type UpdateCCOSPartnershipInput,
+  type UpdateCCOSContentInput,
   type UpdateCCOSProductInput,
   type UpdateCCOSStoreInput,
 } from './repositories/ccos';

@@ -10,6 +10,7 @@ const WORKSPACE_ID = '11111111-1111-4111-8111-111111111111';
 const STORE_ID = '22222222-2222-4222-8222-222222222222';
 const PARTNERSHIP_ID = '33333333-3333-4333-8333-333333333333';
 const PRODUCT_ID = '55555555-5555-4555-8555-555555555555';
+const CONTENT_ID = '66666666-6666-4666-8666-666666666666';
 const NOW = new Date('2026-09-27T12:00:00.000Z');
 
 const store = {
@@ -60,6 +61,21 @@ const product = {
   updatedAt: NOW,
 };
 
+const content = {
+  id: CONTENT_ID,
+  workspaceId: WORKSPACE_ID,
+  productId: PRODUCT_ID,
+  status: 'idea' as const,
+  platform: 'instagram',
+  format: 'reel',
+  concept: 'A product story',
+  scheduledAt: null,
+  publishedAt: null,
+  publicationUrl: null,
+  createdAt: NOW,
+  updatedAt: NOW,
+};
+
 function createRepository() {
   return {
     createStore: vi.fn().mockResolvedValue(store),
@@ -74,6 +90,10 @@ function createRepository() {
     listProducts: vi.fn().mockResolvedValue([product]),
     getProduct: vi.fn().mockResolvedValue(product),
     updateProduct: vi.fn().mockResolvedValue(product),
+    createContent: vi.fn().mockResolvedValue(content),
+    listContents: vi.fn().mockResolvedValue([content]),
+    getContent: vi.fn().mockResolvedValue(content),
+    updateContent: vi.fn().mockResolvedValue(content),
   };
 }
 
@@ -365,5 +385,141 @@ describe('CCOS store and partnership routes', () => {
     expect(readResponse.statusCode).toBe(200);
     expect(writeResponse.statusCode).toBe(403);
     expect(repository.updateProduct).not.toHaveBeenCalled();
+  });
+
+  it('creates content only after a tenant-scoped product lookup', async () => {
+    const repository = createRepository();
+    const app = await buildApp(repository);
+    apps.push(app);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/ccos/products/${PRODUCT_ID}/contents`,
+      payload: { platform: 'instagram', format: 'reel', concept: 'A product story' },
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(repository.getProduct).toHaveBeenCalledWith(WORKSPACE_ID, PRODUCT_ID);
+    expect(repository.createContent).toHaveBeenCalledWith({
+      workspaceId: WORKSPACE_ID,
+      productId: PRODUCT_ID,
+      platform: 'instagram',
+      format: 'reel',
+      concept: 'A product story',
+    });
+  });
+
+  it('lists contents with and without a product filter', async () => {
+    const repository = createRepository();
+    const app = await buildApp(repository);
+    apps.push(app);
+
+    const allResponse = await app.inject({ method: 'GET', url: '/api/ccos/contents' });
+    const filteredResponse = await app.inject({
+      method: 'GET', url: `/api/ccos/contents?productId=${PRODUCT_ID}`,
+    });
+
+    expect(allResponse.statusCode).toBe(200);
+    expect(filteredResponse.statusCode).toBe(200);
+    expect(repository.listContents).toHaveBeenNthCalledWith(1, WORKSPACE_ID, undefined);
+    expect(repository.listContents).toHaveBeenNthCalledWith(2, WORKSPACE_ID, PRODUCT_ID);
+  });
+
+  it('rejects malformed content UUIDs before repository access', async () => {
+    const repository = createRepository();
+    const app = await buildApp(repository);
+    apps.push(app);
+
+    const response = await app.inject({ method: 'GET', url: '/api/ccos/contents/not-a-uuid' });
+
+    expect(response.statusCode).toBe(400);
+    expect(repository.getContent).not.toHaveBeenCalled();
+  });
+
+  it('allows viewers to read content but forbids content mutations', async () => {
+    const repository = createRepository();
+    const app = await buildApp(repository, 'viewer');
+    apps.push(app);
+
+    const readResponse = await app.inject({ method: 'GET', url: `/api/ccos/contents/${CONTENT_ID}` });
+    const writeResponse = await app.inject({
+      method: 'PATCH', url: `/api/ccos/contents/${CONTENT_ID}`, payload: { status: 'planned' },
+    });
+
+    expect(readResponse.statusCode).toBe(200);
+    expect(writeResponse.statusCode).toBe(403);
+    expect(repository.updateContent).not.toHaveBeenCalled();
+  });
+
+  it('returns a conflict for an invalid content lifecycle transition', async () => {
+    const repository = createRepository();
+    repository.updateContent.mockRejectedValueOnce(
+      new Error('Invalid CCOS content transition: idea -> published'),
+    );
+    const app = await buildApp(repository);
+    apps.push(app);
+
+    const response = await app.inject({
+      method: 'PATCH', url: `/api/ccos/contents/${CONTENT_ID}`, payload: { status: 'published' },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ error: 'INVALID_TRANSITION' });
+  });
+
+  it('rejects null create fields and unexpected content payload fields', async () => {
+    const repository = createRepository();
+    const app = await buildApp(repository);
+    apps.push(app);
+
+    const nullFieldResponse = await app.inject({
+      method: 'POST', url: `/api/ccos/products/${PRODUCT_ID}/contents`,
+      payload: { platform: 'instagram', format: null },
+    });
+    const extraFieldResponse = await app.inject({
+      method: 'POST', url: `/api/ccos/products/${PRODUCT_ID}/contents`,
+      payload: { platform: 'instagram', workspaceId: WORKSPACE_ID },
+    });
+
+    expect(nullFieldResponse.statusCode).toBe(400);
+    expect(extraFieldResponse.statusCode).toBe(400);
+    expect(repository.createContent).not.toHaveBeenCalled();
+  });
+
+  it('maps missing publication metadata to an invalid-transition conflict', async () => {
+    const repository = createRepository();
+    repository.updateContent.mockRejectedValueOnce(
+      new Error('Invalid CCOS content publication: publishedAt and publicationUrl are required'),
+    );
+    const app = await buildApp(repository);
+    apps.push(app);
+
+    const response = await app.inject({
+      method: 'PATCH', url: `/api/ccos/contents/${CONTENT_ID}`, payload: { status: 'published' },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ error: 'INVALID_TRANSITION' });
+  });
+
+  it('delegates publication metadata clears to the persisted-state invariant and returns conflict', async () => {
+    const repository = createRepository();
+    repository.updateContent.mockRejectedValueOnce(
+      new Error('Invalid CCOS content publication: publishedAt and publicationUrl are required'),
+    );
+    const app = await buildApp(repository);
+    apps.push(app);
+
+    const response = await app.inject({
+      method: 'PATCH',
+      url: `/api/ccos/contents/${CONTENT_ID}`,
+      payload: { publishedAt: null, publicationUrl: null },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(repository.updateContent).toHaveBeenCalledWith(WORKSPACE_ID, CONTENT_ID, {
+      publishedAt: null,
+      publicationUrl: null,
+    });
   });
 });
