@@ -1,4 +1,4 @@
-import { Pool } from 'pg';
+import { Pool, type PoolClient } from 'pg';
 import {
   assertPartnershipTransition,
   assertProductTransition,
@@ -7,9 +7,17 @@ import {
   type PartnershipStatus,
   type ProductStatus,
 } from '../ccos/lifecycle';
+import { getNextActionRule, type NextActionRuleResult } from '../ccos/next-actions';
 
 export type PartnershipType = 'inbound_invite' | 'outbound_prospecting' | 'affiliate' | 'paid_campaign' | 'gifting';
 export type CCOSPriority = 'low' | 'normal' | 'high' | 'urgent';
+export type CCOSNextActionStatus = 'open' | 'in_progress' | 'waiting' | 'completed' | 'cancelled';
+export type CCOSActionTarget =
+  | { type: 'store'; id: string }
+  | { type: 'partnership'; id: string }
+  | { type: 'product'; id: string }
+  | { type: 'content'; id: string }
+  | { type: 'interaction'; id: string };
 
 export interface CreateCCOSStoreInput {
   workspaceId: string;
@@ -99,6 +107,28 @@ export interface UpdateCCOSContentInput {
   publicationUrl?: string | null;
 }
 
+export interface CreateCCOSNextActionInput {
+  workspaceId: string;
+  target: CCOSActionTarget;
+  title: string;
+  priority?: CCOSPriority;
+  dueAt?: Date;
+  ownerUserId?: string;
+  generatedAutomatically?: boolean;
+  ruleKey?: string;
+  waitingReason?: string;
+}
+
+export interface UpdateCCOSNextActionInput {
+  status?: CCOSNextActionStatus;
+  title?: string;
+  priority?: CCOSPriority;
+  dueAt?: Date | null;
+  ownerUserId?: string | null;
+  waitingReason?: string | null;
+  resolutionReason?: string | null;
+}
+
 export interface CCOSStoreRecord {
   id: string;
   workspaceId: string;
@@ -162,6 +192,24 @@ export interface CCOSContentRecord {
   updatedAt: Date;
 }
 
+export interface CCOSNextActionRecord {
+  id: string;
+  workspaceId: string;
+  target: CCOSActionTarget;
+  title: string;
+  ruleKey: string | null;
+  waitingReason: string | null;
+  resolutionReason: string | null;
+  status: CCOSNextActionStatus;
+  priority: CCOSPriority;
+  dueAt: Date | null;
+  ownerUserId: string | null;
+  generatedAutomatically: boolean;
+  completedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 type StoreRow = {
   id: string; workspace_id: string; name: string; contact_name: string | null;
   contact_email: string | null; notes: string | null; created_at: Date; updated_at: Date;
@@ -183,6 +231,14 @@ type ContentRow = {
   format: string | null; concept: string | null; scheduled_at: Date | null;
   published_at: Date | null; publication_url: string | null; created_at: Date; updated_at: Date;
 };
+type NextActionRow = {
+  id: string; workspace_id: string; store_id: string | null; partnership_id: string | null;
+  product_id: string | null; content_id: string | null; interaction_id: string | null;
+  title: string; rule_key: string | null; dedupe_key: string | null; waiting_reason: string | null;
+  resolution_reason: string | null; status: CCOSNextActionStatus;
+  priority: CCOSPriority; due_at: Date | null; owner_user_id: string | null;
+  generated_automatically: boolean; completed_at: Date | null; created_at: Date; updated_at: Date;
+};
 
 const STORE_COLUMNS = 'id, workspace_id, name, contact_name, contact_email, notes, created_at, updated_at';
 const PARTNERSHIP_COLUMNS = `id, workspace_id, store_id, type, status, title, terms, priority,
@@ -192,6 +248,16 @@ const PRODUCT_COLUMNS = `id, workspace_id, partnership_id, name, sku, product_ur
   priority, source, provenance, created_at, updated_at`;
 const CONTENT_COLUMNS = `id, workspace_id, product_id, status, platform, format, concept,
   scheduled_at, published_at, publication_url, created_at, updated_at`;
+const NEXT_ACTION_COLUMNS = `id, workspace_id, store_id, partnership_id, product_id, content_id,
+  interaction_id, title, rule_key, dedupe_key, waiting_reason, resolution_reason, status, priority, due_at, owner_user_id,
+  generated_automatically, completed_at, created_at, updated_at`;
+const NEXT_ACTION_TRANSITIONS: Readonly<Record<CCOSNextActionStatus, readonly CCOSNextActionStatus[]>> = {
+  open: ['in_progress', 'waiting', 'completed', 'cancelled'],
+  in_progress: ['open', 'waiting', 'completed', 'cancelled'],
+  waiting: ['open', 'in_progress', 'completed', 'cancelled'],
+  completed: [],
+  cancelled: [],
+};
 
 function mapStore(row: StoreRow): CCOSStoreRecord {
   return { id: row.id, workspaceId: row.workspace_id, name: row.name, contactName: row.contact_name,
@@ -224,6 +290,24 @@ function mapContent(row: ContentRow): CCOSContentRecord {
   };
 }
 
+function mapNextAction(row: NextActionRow): CCOSNextActionRecord {
+  const candidates: CCOSActionTarget[] = [
+    row.store_id ? { type: 'store', id: row.store_id } : null,
+    row.partnership_id ? { type: 'partnership', id: row.partnership_id } : null,
+    row.product_id ? { type: 'product', id: row.product_id } : null,
+    row.content_id ? { type: 'content', id: row.content_id } : null,
+    row.interaction_id ? { type: 'interaction', id: row.interaction_id } : null,
+  ].filter((target): target is CCOSActionTarget => target !== null);
+  if (candidates.length !== 1) throw new Error('CCOS next action must have exactly one target');
+  return {
+    id: row.id, workspaceId: row.workspace_id, target: candidates[0], title: row.title,
+    ruleKey: row.rule_key, waitingReason: row.waiting_reason, resolutionReason: row.resolution_reason,
+    status: row.status, priority: row.priority, dueAt: row.due_at,
+    ownerUserId: row.owner_user_id, generatedAutomatically: row.generated_automatically,
+    completedAt: row.completed_at, createdAt: row.created_at, updatedAt: row.updated_at,
+  };
+}
+
 export class CCOSRepository {
   private readonly pool: Pool;
   private readonly ownsPool: boolean;
@@ -236,6 +320,136 @@ export class CCOSRepository {
       this.ownsPool = false;
       this.pool = poolOrDatabaseUrl;
     }
+  }
+
+  private targetColumns(target: CCOSActionTarget): [string | null, string | null, string | null, string | null, string | null] {
+    return [
+      target.type === 'store' ? target.id : null,
+      target.type === 'partnership' ? target.id : null,
+      target.type === 'product' ? target.id : null,
+      target.type === 'content' ? target.id : null,
+      target.type === 'interaction' ? target.id : null,
+    ];
+  }
+
+  private async syncGeneratedAction(
+    client: PoolClient,
+    workspaceId: string,
+    target: Extract<CCOSActionTarget, { type: 'partnership' | 'product' | 'content' }>,
+    rule: NextActionRuleResult,
+  ): Promise<void> {
+    const targetColumn = `${target.type}_id`;
+    await client.query(
+      `UPDATE ccos_next_actions
+          SET status = 'cancelled', completed_at = NOW(), resolution_reason = $3, updated_at = NOW()
+        WHERE workspace_id = $1 AND ${targetColumn} = $2 AND generated_automatically = true
+          AND status IN ('open', 'in_progress', 'waiting') AND rule_key IS DISTINCT FROM $4`,
+      [workspaceId, target.id, rule.kind === 'terminal' ? rule.reason : 'Superseded by lifecycle change', rule.ruleKey],
+    );
+    if (rule.kind === 'terminal') return;
+    const dedupeKey = `${rule.ruleKey}:${target.type}:${target.id}`;
+    const [storeId, partnershipId, productId, contentId, interactionId] = this.targetColumns(target);
+    await client.query(
+      `INSERT INTO ccos_next_actions
+       (workspace_id, store_id, partnership_id, product_id, content_id, interaction_id, title, rule_key,
+        dedupe_key, waiting_reason, status, priority, generated_automatically)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,true)
+       ON CONFLICT (workspace_id, dedupe_key)
+         WHERE generated_automatically = true AND status IN ('open', 'in_progress', 'waiting')
+       DO UPDATE SET title = EXCLUDED.title, waiting_reason = EXCLUDED.waiting_reason,
+         priority = EXCLUDED.priority, updated_at = NOW()`,
+      [workspaceId, storeId, partnershipId, productId, contentId, interactionId, rule.title, rule.ruleKey,
+        dedupeKey, rule.kind === 'waiting' ? rule.reason : null, rule.kind === 'waiting' ? 'waiting' : 'open', rule.priority],
+    );
+  }
+
+  async createNextAction(input: CreateCCOSNextActionInput): Promise<CCOSNextActionRecord> {
+    const generated = input.generatedAutomatically ?? false;
+    if (generated && !input.ruleKey) throw new Error('Generated CCOS next actions require ruleKey');
+    const [storeId, partnershipId, productId, contentId, interactionId] = this.targetColumns(input.target);
+    const dedupeKey = generated ? `${input.ruleKey}:${input.target.type}:${input.target.id}` : null;
+    const result = await this.pool.query<NextActionRow>(
+      `INSERT INTO ccos_next_actions
+       (workspace_id, store_id, partnership_id, product_id, content_id, interaction_id, title, rule_key,
+        dedupe_key, waiting_reason, priority, due_at, owner_user_id, generated_automatically)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       ON CONFLICT (workspace_id, dedupe_key)
+         WHERE generated_automatically = true AND status IN ('open', 'in_progress', 'waiting')
+       DO UPDATE SET updated_at = ccos_next_actions.updated_at
+       RETURNING ${NEXT_ACTION_COLUMNS}`,
+      [input.workspaceId, storeId, partnershipId, productId, contentId, interactionId, input.title,
+        input.ruleKey ?? null, dedupeKey, input.waitingReason ?? null, input.priority ?? 'normal',
+        input.dueAt ?? null, input.ownerUserId ?? null, generated],
+    );
+    if (result.rowCount !== 1) throw new Error('CCOS next action insert did not return exactly one row');
+    return mapNextAction(result.rows[0]);
+  }
+
+  async getNextAction(workspaceId: string, actionId: string): Promise<CCOSNextActionRecord | null> {
+    const result = await this.pool.query<NextActionRow>(
+      `SELECT ${NEXT_ACTION_COLUMNS} FROM ccos_next_actions WHERE workspace_id = $1 AND id = $2`,
+      [workspaceId, actionId],
+    );
+    return result.rows[0] ? mapNextAction(result.rows[0]) : null;
+  }
+
+  async listAttentionInbox(workspaceId: string): Promise<CCOSNextActionRecord[]> {
+    const result = await this.pool.query<NextActionRow>(
+      `SELECT ${NEXT_ACTION_COLUMNS} FROM ccos_next_actions
+        WHERE workspace_id = $1 AND status IN ('open', 'in_progress', 'waiting')
+        ORDER BY CASE WHEN status = 'waiting' THEN 1 ELSE 0 END,
+          CASE WHEN due_at < NOW() THEN 0 ELSE 1 END,
+          CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,
+          due_at ASC NULLS LAST, created_at ASC, id ASC`,
+      [workspaceId],
+    );
+    return result.rows.map(mapNextAction);
+  }
+
+  async updateNextAction(
+    workspaceId: string, actionId: string, input: UpdateCCOSNextActionInput,
+  ): Promise<CCOSNextActionRecord | null> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const selected = await client.query<NextActionRow>(
+        `SELECT ${NEXT_ACTION_COLUMNS} FROM ccos_next_actions
+          WHERE workspace_id = $1 AND id = $2 FOR UPDATE`, [workspaceId, actionId],
+      );
+      const current = selected.rows[0] ? mapNextAction(selected.rows[0]) : null;
+      if (!current) { await client.query('ROLLBACK'); return null; }
+      if (current.generatedAutomatically && input.status !== undefined
+        && ['completed', 'cancelled'].includes(input.status)) {
+        throw new Error('Generated CCOS next actions are resolved only by a target lifecycle transition');
+      }
+      if (input.status !== undefined && input.status !== current.status
+        && !NEXT_ACTION_TRANSITIONS[current.status].includes(input.status)) {
+        throw new Error(`Invalid CCOS next action transition: ${current.status} -> ${input.status}`);
+      }
+      const updates: string[] = [];
+      const values: unknown[] = [workspaceId, actionId];
+      const add = (column: string, value: unknown) => { values.push(value); updates.push(`${column} = $${values.length}`); };
+      if (input.status !== undefined) {
+        add('status', input.status);
+        add('completed_at', ['completed', 'cancelled'].includes(input.status) ? new Date() : null);
+      }
+      if (input.title !== undefined) add('title', input.title);
+      if (input.priority !== undefined) add('priority', input.priority);
+      if (input.dueAt !== undefined) add('due_at', input.dueAt);
+      if (input.ownerUserId !== undefined) add('owner_user_id', input.ownerUserId);
+      if (input.waitingReason !== undefined) add('waiting_reason', input.waitingReason);
+      if (input.resolutionReason !== undefined) add('resolution_reason', input.resolutionReason);
+      if (updates.length === 0) { await client.query('COMMIT'); return current; }
+      const result = await client.query<NextActionRow>(
+        `UPDATE ccos_next_actions SET ${updates.join(', ')}, updated_at = NOW()
+          WHERE workspace_id = $1 AND id = $2 RETURNING ${NEXT_ACTION_COLUMNS}`, values,
+      );
+      await client.query('COMMIT');
+      return result.rows[0] ? mapNextAction(result.rows[0]) : null;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally { client.release(); }
   }
 
   async createStore(input: CreateCCOSStoreInput): Promise<CCOSStoreRecord> {
@@ -279,14 +493,22 @@ export class CCOSRepository {
   }
 
   async createPartnership(input: CreateCCOSPartnershipInput): Promise<CCOSPartnershipRecord> {
-    const result = await this.pool.query<PartnershipRow>(
-      `INSERT INTO ccos_partnerships (workspace_id, store_id, type, title, terms, priority, last_contact_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING ${PARTNERSHIP_COLUMNS}`,
-      [input.workspaceId, input.storeId, input.type, input.title ?? null, input.terms ?? null,
-        input.priority ?? 'normal', input.lastContactAt ?? null],
-    );
-    if (result.rowCount !== 1) throw new Error('CCOS partnership insert did not return exactly one row');
-    return mapPartnership(result.rows[0]);
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query<PartnershipRow>(
+        `INSERT INTO ccos_partnerships (workspace_id, store_id, type, title, terms, priority, last_contact_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING ${PARTNERSHIP_COLUMNS}`,
+        [input.workspaceId, input.storeId, input.type, input.title ?? null, input.terms ?? null,
+          input.priority ?? 'normal', input.lastContactAt ?? null],
+      );
+      if (result.rowCount !== 1) throw new Error('CCOS partnership insert did not return exactly one row');
+      const record = mapPartnership(result.rows[0]);
+      await this.syncGeneratedAction(client, input.workspaceId, { type: 'partnership', id: record.id },
+        getNextActionRule({ type: 'partnership', status: record.status }));
+      await client.query('COMMIT');
+      return record;
+    } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
   }
 
   async listPartnerships(workspaceId: string, storeId?: string): Promise<CCOSPartnershipRecord[]> {
@@ -349,6 +571,10 @@ export class CCOSRepository {
          WHERE workspace_id = $1 AND id = $2 RETURNING ${PARTNERSHIP_COLUMNS}`,
         values,
       );
+      if (input.status !== undefined && input.status !== current.status) {
+        await this.syncGeneratedAction(client, workspaceId, { type: 'partnership', id: partnershipId },
+          getNextActionRule({ type: 'partnership', status: input.status }));
+      }
       await client.query('COMMIT');
       return result.rows[0] ? mapPartnership(result.rows[0]) : null;
     } catch (error) {
@@ -360,20 +586,27 @@ export class CCOSRepository {
   }
 
   async createProduct(input: CreateCCOSProductInput): Promise<CCOSProductRecord> {
-    const result = await this.pool.query<ProductRow>(
-      `INSERT INTO ccos_products
-       (workspace_id, partnership_id, name, sku, product_url, price_amount, currency, commission_rate,
-        commission_amount, stock_state, tracking_code, shipped_at, received_at, priority, source, provenance)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-       RETURNING ${PRODUCT_COLUMNS}`,
-      [input.workspaceId, input.partnershipId, input.name, input.sku ?? null, input.productUrl ?? null,
-        input.priceAmount ?? null, input.currency ?? null, input.commissionRate ?? null,
-        input.commissionAmount ?? null, input.stockState ?? null, input.trackingCode ?? null,
-        input.shippedAt ?? null, input.receivedAt ?? null, input.priority ?? 'normal',
-        input.source ?? 'manual', input.provenance ?? null],
-    );
-    if (result.rowCount !== 1) throw new Error('CCOS product insert did not return exactly one row');
-    return mapProduct(result.rows[0]);
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query<ProductRow>(
+        `INSERT INTO ccos_products
+         (workspace_id, partnership_id, name, sku, product_url, price_amount, currency, commission_rate,
+          commission_amount, stock_state, tracking_code, shipped_at, received_at, priority, source, provenance)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING ${PRODUCT_COLUMNS}`,
+        [input.workspaceId, input.partnershipId, input.name, input.sku ?? null, input.productUrl ?? null,
+          input.priceAmount ?? null, input.currency ?? null, input.commissionRate ?? null,
+          input.commissionAmount ?? null, input.stockState ?? null, input.trackingCode ?? null,
+          input.shippedAt ?? null, input.receivedAt ?? null, input.priority ?? 'normal',
+          input.source ?? 'manual', input.provenance ?? null],
+      );
+      if (result.rowCount !== 1) throw new Error('CCOS product insert did not return exactly one row');
+      const record = mapProduct(result.rows[0]);
+      await this.syncGeneratedAction(client, input.workspaceId, { type: 'product', id: record.id },
+        getNextActionRule({ type: 'product', status: record.status }));
+      await client.query('COMMIT');
+      return record;
+    } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
   }
 
   async listProducts(workspaceId: string, partnershipId?: string): Promise<CCOSProductRecord[]> {
@@ -452,6 +685,8 @@ export class CCOSRepository {
             `Product ${current.id} lifecycle changed: ${current.status} -> ${input.status}`,
           ],
         );
+        await this.syncGeneratedAction(client, workspaceId, { type: 'product', id: productId },
+          getNextActionRule({ type: 'product', status: input.status! }));
       }
       await client.query('COMMIT');
       return result.rows[0] ? mapProduct(result.rows[0]) : null;
@@ -464,13 +699,21 @@ export class CCOSRepository {
   }
 
   async createContent(input: CreateCCOSContentInput): Promise<CCOSContentRecord> {
-    const result = await this.pool.query<ContentRow>(
-      `INSERT INTO ccos_contents (workspace_id, product_id, platform, format, concept)
-       VALUES ($1, $2, $3, $4, $5) RETURNING ${CONTENT_COLUMNS}`,
-      [input.workspaceId, input.productId, input.platform, input.format ?? null, input.concept ?? null],
-    );
-    if (result.rowCount !== 1) throw new Error('CCOS content insert did not return exactly one row');
-    return mapContent(result.rows[0]);
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query<ContentRow>(
+        `INSERT INTO ccos_contents (workspace_id, product_id, platform, format, concept)
+         VALUES ($1, $2, $3, $4, $5) RETURNING ${CONTENT_COLUMNS}`,
+        [input.workspaceId, input.productId, input.platform, input.format ?? null, input.concept ?? null],
+      );
+      if (result.rowCount !== 1) throw new Error('CCOS content insert did not return exactly one row');
+      const record = mapContent(result.rows[0]);
+      await this.syncGeneratedAction(client, input.workspaceId, { type: 'content', id: record.id },
+        getNextActionRule({ type: 'content', status: record.status }));
+      await client.query('COMMIT');
+      return record;
+    } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
   }
 
   async listContents(workspaceId: string, productId?: string): Promise<CCOSContentRecord[]> {
@@ -562,6 +805,10 @@ export class CCOSRepository {
            VALUES ($1, $2, 'system', 'content_lifecycle', $3, NOW(), 'system')`,
           [workspaceId, selected.rows[0].partnership_id, summary],
         );
+      }
+      if (statusChanged) {
+        await this.syncGeneratedAction(client, workspaceId, { type: 'content', id: contentId },
+          getNextActionRule({ type: 'content', status: input.status! }));
       }
       await client.query('COMMIT');
       return result.rows[0] ? mapContent(result.rows[0]) : null;

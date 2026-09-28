@@ -3,15 +3,18 @@ import { z } from 'zod';
 import {
   CCOSRepository,
   type CCOSContentRecord,
+  type CCOSNextActionRecord,
   type CCOSPartnershipRecord,
   type CCOSProductRecord,
   type CCOSStoreRecord,
   type CreateCCOSPartnershipInput,
   type CreateCCOSContentInput,
+  type CreateCCOSNextActionInput,
   type CreateCCOSProductInput,
   type CreateCCOSStoreInput,
   type UpdateCCOSPartnershipInput,
   type UpdateCCOSContentInput,
+  type UpdateCCOSNextActionInput,
   type UpdateCCOSProductInput,
   type UpdateCCOSStoreInput,
 } from '@ttsdata/db';
@@ -49,6 +52,7 @@ const storeParamsSchema = z.object({ storeId: z.string().uuid() }).strict();
 const partnershipParamsSchema = z.object({ partnershipId: z.string().uuid() }).strict();
 const productParamsSchema = z.object({ productId: z.string().uuid() }).strict();
 const contentParamsSchema = z.object({ contentId: z.string().uuid() }).strict();
+const nextActionParamsSchema = z.object({ actionId: z.string().uuid() }).strict();
 
 const createStoreSchema = z.object({
   name: z.string().trim().min(1).max(255),
@@ -131,6 +135,31 @@ const updateContentSchema = z.object({
   publicationUrl: z.string().url().max(2048).nullable().optional(),
 }).strict().refine((body) => Object.keys(body).length > 0, 'At least one field is required');
 
+const actionTargetSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('store'), id: z.string().uuid() }).strict(),
+  z.object({ type: z.literal('partnership'), id: z.string().uuid() }).strict(),
+  z.object({ type: z.literal('product'), id: z.string().uuid() }).strict(),
+  z.object({ type: z.literal('content'), id: z.string().uuid() }).strict(),
+  z.object({ type: z.literal('interaction'), id: z.string().uuid() }).strict(),
+]);
+const nextActionStatus = z.enum(['open', 'in_progress', 'waiting', 'completed', 'cancelled']);
+const createNextActionSchema = z.object({
+  target: actionTargetSchema,
+  title: z.string().trim().min(1).max(255),
+  priority: priority.optional(),
+  dueAt: dateValue.optional(),
+  ownerUserId: z.string().uuid().optional(),
+}).strict();
+const updateNextActionSchema = z.object({
+  status: nextActionStatus.optional(),
+  title: z.string().trim().min(1).max(255).optional(),
+  priority: priority.optional(),
+  dueAt: dateValue.nullable().optional(),
+  ownerUserId: z.string().uuid().nullable().optional(),
+  waitingReason: z.string().trim().min(1).max(2_000).nullable().optional(),
+  resolutionReason: z.string().trim().min(1).max(2_000).nullable().optional(),
+}).strict().refine((body) => Object.keys(body).length > 0, 'At least one field is required');
+
 type StorePartnershipRepository = {
   createStore(input: CreateCCOSStoreInput): Promise<CCOSStoreRecord>;
   listStores(workspaceId: string): Promise<CCOSStoreRecord[]>;
@@ -160,6 +189,14 @@ type StorePartnershipRepository = {
     contentId: string,
     input: UpdateCCOSContentInput,
   ): Promise<CCOSContentRecord | null>;
+  createNextAction(input: CreateCCOSNextActionInput): Promise<CCOSNextActionRecord>;
+  listAttentionInbox(workspaceId: string): Promise<CCOSNextActionRecord[]>;
+  getNextAction(workspaceId: string, actionId: string): Promise<CCOSNextActionRecord | null>;
+  updateNextAction(
+    workspaceId: string,
+    actionId: string,
+    input: UpdateCCOSNextActionInput,
+  ): Promise<CCOSNextActionRecord | null>;
 };
 
 function parse<T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, input: unknown): T {
@@ -354,6 +391,51 @@ export async function registerCCOSRoutes(app: FastifyInstance, options: CCOSRout
       return reply.send({ content });
     } catch (error) {
       if (error instanceof Error && error.message.startsWith('Invalid CCOS content')) {
+        throw new AppError(error.message, 409, 'INVALID_TRANSITION');
+      }
+      throw error;
+    }
+  });
+
+  app.get('/next-actions', { preHandler: authenticate }, async (request, reply) => {
+    return reply.send({ nextActions: await repository.listAttentionInbox(request.auth!.workspaceId) });
+  });
+
+  app.post('/next-actions', {
+    preHandler: [authenticate, authorizeWorkspaceWrite],
+  }, async (request, reply) => {
+    const body = parse(createNextActionSchema, request.body);
+    const input: CreateCCOSNextActionInput = {
+      workspaceId: request.auth!.workspaceId,
+      ...body,
+      generatedAutomatically: false,
+    };
+    const nextAction = await repository.createNextAction(input);
+    return reply.status(201).send({ nextAction });
+  });
+
+  app.get('/next-actions/:actionId', { preHandler: authenticate }, async (request, reply) => {
+    const { actionId } = parse(nextActionParamsSchema, request.params);
+    const nextAction = await repository.getNextAction(request.auth!.workspaceId, actionId);
+    if (!nextAction) throw new AppError('Next action not found', 404, 'NOT_FOUND');
+    return reply.send({ nextAction });
+  });
+
+  app.patch('/next-actions/:actionId', {
+    preHandler: [authenticate, authorizeWorkspaceWrite],
+  }, async (request, reply) => {
+    const { actionId } = parse(nextActionParamsSchema, request.params);
+    try {
+      const nextAction = await repository.updateNextAction(
+        request.auth!.workspaceId,
+        actionId,
+        parse(updateNextActionSchema, request.body),
+      );
+      if (!nextAction) throw new AppError('Next action not found', 404, 'NOT_FOUND');
+      return reply.send({ nextAction });
+    } catch (error) {
+      if (error instanceof Error && (error.message.startsWith('Invalid CCOS next action transition:')
+        || error.message === 'Generated CCOS next actions are resolved only by a target lifecycle transition')) {
         throw new AppError(error.message, 409, 'INVALID_TRANSITION');
       }
       throw error;

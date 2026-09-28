@@ -400,6 +400,65 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
     )).rejects.toMatchObject({ code: '23503' });
   });
 
+  it('creates exactly one active generated action under concurrent duplicate delivery', async () => {
+    const store = await repository.createStore({ workspaceId: workspaceA, name: 'Action Race Store' });
+    const partnership = await repository.createPartnership({
+      workspaceId: workspaceA, storeId: store.id, type: 'affiliate',
+    });
+    const input = {
+      workspaceId: workspaceA,
+      target: { type: 'partnership' as const, id: partnership.id },
+      title: 'Concurrent follow-up',
+      generatedAutomatically: true,
+      ruleKey: 'test.concurrent',
+    };
+    const [first, second] = await Promise.all([
+      repository.createNextAction(input), repository.createNextAction(input),
+    ]);
+    expect(first.id).toBe(second.id);
+    const count = await pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM ccos_next_actions
+        WHERE workspace_id = $1 AND dedupe_key = $2 AND status IN ('open','in_progress','waiting')`,
+      [workspaceA, `test.concurrent:partnership:${partnership.id}`],
+    );
+    expect(count.rows[0].count).toBe('1');
+  });
+
+  it('synchronizes lifecycle actions, preserves terminal history, and isolates the inbox', async () => {
+    const store = await repository.createStore({ workspaceId: workspaceA, name: 'Inbox Store' });
+    const partnership = await repository.createPartnership({
+      workspaceId: workspaceA, storeId: store.id, type: 'inbound_invite',
+    });
+    const initial = (await repository.listAttentionInbox(workspaceA))
+      .find((action) => action.target.type === 'partnership' && action.target.id === partnership.id);
+    expect(initial).toMatchObject({ ruleKey: 'partnership.lead.contact', generatedAutomatically: true });
+
+    await repository.updatePartnership(workspaceA, partnership.id, { status: 'contacted' });
+    const active = (await repository.listAttentionInbox(workspaceA))
+      .filter((action) => action.target.type === 'partnership' && action.target.id === partnership.id);
+    expect(active).toHaveLength(1);
+    expect(active[0].ruleKey).toBe('partnership.contacted.follow-up');
+    await expect(repository.listAttentionInbox(workspaceB)).resolves.not.toContainEqual(
+      expect.objectContaining({ id: active[0].id }),
+    );
+    await expect(repository.updateNextAction(workspaceA, active[0].id, {
+      status: 'completed', resolutionReason: 'Follow-up recorded',
+    })).rejects.toThrow('Generated CCOS next actions are resolved only by a target lifecycle transition');
+    const preserved = await repository.getNextAction(workspaceA, active[0].id);
+    expect(preserved).toMatchObject({ status: 'open', completedAt: null });
+    await expect(repository.getNextAction(workspaceB, active[0].id)).resolves.toBeNull();
+
+    const manual = await repository.createNextAction({
+      workspaceId: workspaceA, target: { type: 'partnership', id: partnership.id }, title: 'Manual audit',
+    });
+    await repository.updateNextAction(workspaceA, manual.id, {
+      status: 'completed', resolutionReason: 'Audit complete',
+    });
+    await expect(repository.getNextAction(workspaceA, manual.id)).resolves.toMatchObject({
+      status: 'completed', resolutionReason: 'Audit complete',
+    });
+  });
+
   it('rejects dangling, ambiguous and cross-workspace action targets', async () => {
     const store = await repository.createStore({ workspaceId: workspaceA, name: 'Target Store' });
 

@@ -479,6 +479,10 @@ export const ccosNextActions = pgTable('ccos_next_actions', {
   contentId: uuid('content_id'),
   interactionId: uuid('interaction_id'),
   title: varchar('title', { length: 255 }).notNull(),
+  ruleKey: varchar('rule_key', { length: 128 }),
+  dedupeKey: varchar('dedupe_key', { length: 255 }),
+  waitingReason: text('waiting_reason'),
+  resolutionReason: text('resolution_reason'),
   status: ccosNextActionStatusEnum('status').notNull().default('open'),
   priority: ccosPriorityEnum('priority').notNull().default('normal'),
   dueAt: timestamp('due_at', { withTimezone: true }),
@@ -489,6 +493,9 @@ export const ccosNextActions = pgTable('ccos_next_actions', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   workspaceStatusDueIdx: index('ccos_next_actions_workspace_status_due_idx').on(t.workspaceId, t.status, t.dueAt),
+  activeGeneratedDedupe: uniqueIndex('ccos_next_actions_active_generated_dedupe_idx')
+    .on(t.workspaceId, t.dedupeKey)
+    .where(sql`${t.generatedAutomatically} = true AND ${t.status} IN ('open', 'in_progress', 'waiting')`),
   exactlyOneTarget: check('ccos_next_actions_exactly_one_target', sql`num_nonnulls(${t.storeId}, ${t.partnershipId}, ${t.productId}, ${t.contentId}, ${t.interactionId}) = 1`),
   workspaceOwnerFk: foreignKey({
     name: 'ccos_next_actions_workspace_owner_fk',
