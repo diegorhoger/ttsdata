@@ -423,7 +423,7 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
       adAuthorizationCreatedAt: createdAt, adAuthorizationExpiresAt: expiresAt,
     });
     await repository.updateContent(workspaceA, first.id, {
-      status: 'planned',
+      status: 'filming',
       adAuthorizationCode: 'MANUAL-CODE-2',
     });
     const combinedAudit = await pool.query<{ summary: string }>(
