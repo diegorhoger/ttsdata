@@ -388,15 +388,16 @@ export class CCOSRepository {
     workspaceId: string,
     content: Pick<CCOSContentRecord,
       'id' | 'adAuthorizationStatus' | 'adAuthorizationCode' | 'adAuthorizationExpiresAt'>,
+    affectedRules: string[],
   ): Promise<void> {
-    const rules = ['content.ad-auth.follow-up', 'content.ad-auth.share', 'content.ad-auth.expiry'];
+    if (affectedRules.length === 0) return;
     await client.query(
       `UPDATE ccos_next_actions
           SET status = 'cancelled', completed_at = NOW(),
               resolution_reason = 'Ad authorization details changed', updated_at = NOW()
         WHERE workspace_id = $1 AND content_id = $2 AND generated_automatically = true
           AND rule_key = ANY($3::text[]) AND status IN ('open', 'in_progress', 'waiting')`,
-      [workspaceId, content.id, rules],
+      [workspaceId, content.id, affectedRules],
     );
 
     const actions: Array<{
@@ -422,7 +423,7 @@ export class CCOSRepository {
         });
       }
     }
-    for (const action of actions) {
+    for (const action of actions.filter((candidate) => affectedRules.includes(candidate.ruleKey))) {
       await client.query(
         `INSERT INTO ccos_next_actions
          (workspace_id, content_id, title, rule_key, dedupe_key, waiting_reason, status, priority, due_at,
@@ -906,10 +907,17 @@ export class CCOSRepository {
         `UPDATE ccos_contents SET ${updates.join(', ')}, updated_at = NOW()
          WHERE workspace_id = $1 AND id = $2 RETURNING ${CONTENT_COLUMNS}`, values,
       );
-      const authorizationChanged = input.adAuthorizationStatus !== undefined
-        || input.adAuthorizationCode !== undefined
-        || input.adAuthorizationCreatedAt !== undefined
-        || input.adAuthorizationExpiresAt !== undefined;
+      const sameDate = (left: Date | null, right: Date | null) => left?.getTime() === right?.getTime();
+      const authorizationStatusChanged = input.adAuthorizationStatus !== undefined
+        && input.adAuthorizationStatus !== current.adAuthorizationStatus;
+      const authorizationCodeChanged = input.adAuthorizationCode !== undefined
+        && input.adAuthorizationCode !== current.adAuthorizationCode;
+      const authorizationCreatedAtChanged = input.adAuthorizationCreatedAt !== undefined
+        && !sameDate(input.adAuthorizationCreatedAt, current.adAuthorizationCreatedAt);
+      const authorizationExpiresAtChanged = input.adAuthorizationExpiresAt !== undefined
+        && !sameDate(input.adAuthorizationExpiresAt, current.adAuthorizationExpiresAt);
+      const authorizationChanged = authorizationStatusChanged || authorizationCodeChanged
+        || authorizationCreatedAtChanged || authorizationExpiresAtChanged;
       if (statusChanged || metadataChanged || authorizationChanged) {
         const summary = statusChanged
           ? `Content ${current.id} lifecycle changed: ${current.status} -> ${input.status}${metadataChanged ? '; publication metadata updated' : ''}`
@@ -927,7 +935,13 @@ export class CCOSRepository {
           getNextActionRule({ type: 'content', status: input.status! }));
       }
       if (authorizationChanged) {
-        await this.syncContentAuthorizationActions(client, workspaceId, mapContent(result.rows[0]));
+        const affectedRules = authorizationStatusChanged
+          ? ['content.ad-auth.follow-up', 'content.ad-auth.share', 'content.ad-auth.expiry']
+          : [
+              ...(authorizationCodeChanged ? ['content.ad-auth.share'] : []),
+              ...(authorizationExpiresAtChanged ? ['content.ad-auth.expiry'] : []),
+            ];
+        await this.syncContentAuthorizationActions(client, workspaceId, mapContent(result.rows[0]), affectedRules);
       }
       await client.query('COMMIT');
       return result.rows[0] ? mapContent(result.rows[0]) : null;

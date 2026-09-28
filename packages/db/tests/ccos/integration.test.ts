@@ -438,6 +438,18 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
     await expect(repository.updateNextAction(workspaceA, shareAction.id, {
       status: 'completed', resolutionReason: 'Authorization code shared manually',
     })).resolves.toMatchObject({ status: 'completed', resolutionReason: 'Authorization code shared manually' });
+    const extendedExpiry = new Date('2027-01-28T12:00:00.000Z');
+    await repository.updateContent(workspaceA, first.id, { adAuthorizationExpiresAt: extendedExpiry });
+    await repository.updateContent(workspaceA, first.id, { adAuthorizationExpiresAt: extendedExpiry });
+    const actionsAfterExpiryEdit = await pool.query<{ rule_key: string; due_at: Date | null; status: string }>(
+      `SELECT rule_key, due_at, status FROM ccos_next_actions
+        WHERE workspace_id = $1 AND content_id = $2 AND rule_key LIKE 'content.ad-auth.%'
+          AND status IN ('open', 'in_progress', 'waiting') ORDER BY rule_key`,
+      [workspaceA, first.id],
+    );
+    expect(actionsAfterExpiryEdit.rows).toEqual([
+      { rule_key: 'content.ad-auth.expiry', due_at: extendedExpiry, status: 'open' },
+    ]);
 
     await expect(repository.updateContent(workspaceA, first.id, {
       adAuthorizationExpiresAt: new Date('2026-08-01T00:00:00.000Z'),
