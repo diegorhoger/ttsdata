@@ -197,6 +197,15 @@ const createTemplateSchema = z.object({
   body: z.string().min(1).max(50_000),
   variables: z.array(z.string().trim().regex(/^\w+$/).max(128)).optional(),
 }).strict().superRefine((template, context) => {
+  const withoutValidPlaceholders = `${template.subject}\n${template.body}`.replace(/\{\{\w+\}\}/g, '');
+  if (withoutValidPlaceholders.includes('{{') || withoutValidPlaceholders.includes('}}')) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['body'],
+      message: 'Template contains a malformed placeholder',
+    });
+    return;
+  }
   const actual = new Set<string>();
   for (const text of [template.subject, template.body]) {
     for (const match of text.matchAll(/\{\{(\w+)\}\}/g)) actual.add(match[1]);

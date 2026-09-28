@@ -508,6 +508,9 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
     await expect(repository.createTemplateVersion({
       workspaceId: workspaceA, type: 'receipt', subject: 'Broken', body: 'Hello {{name}}', variables: [],
     })).rejects.toThrow('Invalid CCOS template definition');
+    await expect(repository.createTemplateVersion({
+      workspaceId: workspaceA, type: 'receipt', subject: 'Broken', body: 'Hello {{ name }}', variables: [],
+    })).rejects.toThrow('malformed placeholder');
   });
 
   it('records template usage and validated sources in the partnership timeline atomically', async () => {
@@ -558,9 +561,17 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
       workspaceId: workspaceB, partnershipId: partnership.id, direction: 'outbound', channel: 'email',
       summary: 'Wrong tenant', templateVersionId: template.id,
     })).rejects.toThrow('partnership not found');
+    const storeB = await repository.createStore({ workspaceId: workspaceB, name: 'Other Timeline Store' });
+    const partnershipB = await repository.createPartnership({
+      workspaceId: workspaceB, storeId: storeB.id, type: 'gifting',
+    });
+    const interactionB = await repository.createInteraction({
+      workspaceId: workspaceB, partnershipId: partnershipB.id, direction: 'inbound',
+      channel: 'email', summary: 'Other tenant interaction',
+    });
     await expect(pool.query(
       `INSERT INTO ccos_template_usage (workspace_id, template_version_id, interaction_id) VALUES ($1, $2, $3)`,
-      [workspaceB, template.id, interaction.id],
+      [workspaceB, template.id, interactionB.id],
     )).rejects.toMatchObject({ code: '23503' });
     await expect(pool.query(
       `INSERT INTO ccos_interaction_sources (workspace_id, interaction_id, source_type, source_id)

@@ -930,9 +930,14 @@ describe('CCOS interactions and template routes', () => {
       method: 'POST', url: '/api/ccos/templates',
       payload: { type: 'receipt', subject: 'Hello', body: 'Hi', variables: ['name'] },
     });
+    const malformed = await app.inject({
+      method: 'POST', url: '/api/ccos/templates',
+      payload: { type: 'receipt', subject: 'Hello', body: 'Hi {{name-with-hyphen}}', variables: [] },
+    });
 
     expect(undeclared.statusCode).toBe(400);
     expect(unused.statusCode).toBe(400);
+    expect(malformed.statusCode).toBe(400);
     expect(repository.createTemplateVersion).not.toHaveBeenCalled();
   });
 
