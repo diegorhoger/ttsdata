@@ -705,3 +705,257 @@ describe('CCOS store and partnership routes', () => {
     expect(response.json()).toMatchObject({ error: 'INVALID_TRANSITION' });
   });
 });
+
+describe('CCOS interactions and template routes', () => {
+  it('requires authentication for interaction and template reads', async () => {
+    const repository = createRepository();
+    const app = Fastify({ logger: false });
+    app.setErrorHandler(errorHandler);
+    await app.register(registerCCOSRoutes, {
+      prefix: '/api/ccos',
+      repository: repository as CCOSRouteOptions['repository'],
+      authenticate: async (_request, reply) => reply.status(401).send({ error: 'UNAUTHENTICATED' }),
+    });
+    apps.push(app);
+
+    const timeline = await app.inject({ method: 'GET', url: `/api/ccos/partnerships/${PARTNERSHIP_ID}/timeline` });
+    const suggestions = await app.inject({ method: 'GET', url: '/api/ccos/templates/suggestions/invite_received' });
+    const markSent = await app.inject({
+      method: 'POST',
+      url: `/api/ccos/partnerships/${PARTNERSHIP_ID}/mark-sent`,
+      payload: { channel: 'email', summary: 'Sent without authentication.' },
+    });
+
+    expect(timeline.statusCode).toBe(401);
+    expect(suggestions.statusCode).toBe(401);
+    expect(markSent.statusCode).toBe(401);
+    expect(repository.listTimeline).not.toHaveBeenCalled();
+    expect(repository.getLatestTemplateVersion).not.toHaveBeenCalled();
+    expect(repository.createInteraction).not.toHaveBeenCalled();
+  });
+
+  it('allows owner/admin to explicitly mark an outbound message as sent', async () => {
+    const repository = createRepository();
+    const app = await buildApp(repository, 'admin');
+    apps.push(app);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/ccos/partnerships/${PARTNERSHIP_ID}/mark-sent`,
+      payload: {
+        channel: 'email',
+        summary: 'Sent the approved proposal to the brand.',
+        templateVersionId: TEMPLATE_ID,
+        sourceLinks: [{ sourceType: 'product', sourceId: PRODUCT_ID }],
+      },
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(repository.getPartnership).toHaveBeenCalledWith(WORKSPACE_ID, PARTNERSHIP_ID);
+    expect(repository.getTemplateVersion).toHaveBeenCalledWith(WORKSPACE_ID, TEMPLATE_ID);
+    expect(repository.createInteraction).toHaveBeenCalledWith({
+      workspaceId: WORKSPACE_ID,
+      partnershipId: PARTNERSHIP_ID,
+      direction: 'outbound',
+      channel: 'email',
+      summary: 'Sent the approved proposal to the brand.',
+      templateVersionId: TEMPLATE_ID,
+      sourceLinks: [{ sourceType: 'product', sourceId: PRODUCT_ID }],
+    });
+
+    repository.getProduct.mockResolvedValueOnce(null);
+    const crossTenantSource = await app.inject({
+      method: 'POST',
+      url: `/api/ccos/partnerships/${PARTNERSHIP_ID}/mark-sent`,
+      payload: {
+        channel: 'email',
+        summary: 'Do not attach a product from another workspace.',
+        sourceLinks: [{ sourceType: 'product', sourceId: PRODUCT_ID }],
+      },
+    });
+    expect(crossTenantSource.statusCode).toBe(404);
+    expect(repository.createInteraction).toHaveBeenCalledTimes(1);
+  });
+
+  it('forbids viewers from marking messages sent and rejects malformed or extra fields', async () => {
+    const repository = createRepository();
+    const app = await buildApp(repository, 'viewer');
+    apps.push(app);
+
+    const forbidden = await app.inject({
+      method: 'POST',
+      url: `/api/ccos/partnerships/${PARTNERSHIP_ID}/mark-sent`,
+      payload: { channel: 'email', summary: 'Sent it.' },
+    });
+    expect(forbidden.statusCode).toBe(403);
+    expect(repository.getPartnership).not.toHaveBeenCalled();
+
+    const ownerApp = await buildApp(repository);
+    apps.push(ownerApp);
+    const extraField = await ownerApp.inject({
+      method: 'POST',
+      url: `/api/ccos/partnerships/${PARTNERSHIP_ID}/mark-sent`,
+      payload: { channel: 'email', summary: 'Sent it.', direction: 'system' },
+    });
+    const invalidId = await ownerApp.inject({
+      method: 'POST',
+      url: '/api/ccos/partnerships/not-a-uuid/mark-sent',
+      payload: { channel: 'email', summary: 'Sent it.' },
+    });
+
+    expect(extraField.statusCode).toBe(400);
+    expect(invalidId.statusCode).toBe(400);
+    expect(repository.createInteraction).not.toHaveBeenCalled();
+  });
+
+  it('rejects client-created system and outbound interactions on the generic route', async () => {
+    const repository = createRepository();
+    const app = await buildApp(repository);
+    apps.push(app);
+
+    const system = await app.inject({
+      method: 'POST',
+      url: '/api/ccos/interactions',
+      payload: { partnershipId: PARTNERSHIP_ID, direction: 'system', channel: 'email', summary: 'Forged event' },
+    });
+    const outbound = await app.inject({
+      method: 'POST',
+      url: '/api/ccos/interactions',
+      payload: { partnershipId: PARTNERSHIP_ID, direction: 'outbound', channel: 'email', summary: 'Bypass mark-sent' },
+    });
+
+    expect(system.statusCode).toBe(400);
+    expect(outbound.statusCode).toBe(400);
+    expect(repository.createInteraction).not.toHaveBeenCalled();
+  });
+
+  it('records inbound interactions only after tenant-scoped partnership and template lookups', async () => {
+    const repository = createRepository();
+    const app = await buildApp(repository);
+    apps.push(app);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/ccos/interactions',
+      payload: {
+        partnershipId: PARTNERSHIP_ID,
+        direction: 'inbound',
+        channel: 'email',
+        summary: 'Received a proposal.',
+        templateVersionId: TEMPLATE_ID,
+      },
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(repository.getPartnership).toHaveBeenCalledWith(WORKSPACE_ID, PARTNERSHIP_ID);
+    expect(repository.getTemplateVersion).toHaveBeenCalledWith(WORKSPACE_ID, TEMPLATE_ID);
+    expect(repository.createInteraction).toHaveBeenCalledWith({
+      workspaceId: WORKSPACE_ID,
+      partnershipId: PARTNERSHIP_ID,
+      direction: 'inbound',
+      channel: 'email',
+      summary: 'Received a proposal.',
+      templateVersionId: TEMPLATE_ID,
+      occurredAt: undefined,
+      sourceLinks: undefined,
+    });
+
+    repository.getPartnership.mockResolvedValueOnce(null);
+    const crossTenant = await app.inject({
+      method: 'POST',
+      url: '/api/ccos/interactions',
+      payload: {
+        partnershipId: PARTNERSHIP_ID,
+        direction: 'inbound',
+        channel: 'email',
+        summary: 'Attempt against another workspace.',
+      },
+    });
+    expect(crossTenant.statusCode).toBe(404);
+    expect(repository.createInteraction).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed on a cross-tenant partnership before listing its timeline', async () => {
+    const repository = createRepository();
+    repository.getPartnership.mockResolvedValueOnce(null);
+    const app = await buildApp(repository, 'viewer');
+    apps.push(app);
+
+    const response = await app.inject({ method: 'GET', url: `/api/ccos/partnerships/${PARTNERSHIP_ID}/timeline` });
+
+    expect(response.statusCode).toBe(404);
+    expect(repository.getPartnership).toHaveBeenCalledWith(WORKSPACE_ID, PARTNERSHIP_ID);
+    expect(repository.listTimeline).not.toHaveBeenCalled();
+  });
+
+  it('returns lifecycle template suggestions by tenant without creating interactions', async () => {
+    const repository = createRepository();
+    const app = await buildApp(repository, 'viewer');
+    apps.push(app);
+
+    const response = await app.inject({ method: 'GET', url: '/api/ccos/templates/suggestions/product_received' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ event: 'product_received', templateVersion: { id: TEMPLATE_ID } });
+    expect(repository.getLatestTemplateVersion).toHaveBeenCalledWith(WORKSPACE_ID, 'receipt');
+    expect(repository.createInteraction).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid suggestion events and returns null when no lifecycle template exists', async () => {
+    const repository = createRepository();
+    repository.getLatestTemplateVersion.mockResolvedValueOnce(null);
+    const app = await buildApp(repository, 'viewer');
+    apps.push(app);
+
+    const missing = await app.inject({ method: 'GET', url: '/api/ccos/templates/suggestions/replenishment_due' });
+    const invalid = await app.inject({ method: 'GET', url: '/api/ccos/templates/suggestions/send_email_now' });
+
+    expect(missing.statusCode).toBe(200);
+    expect(missing.json()).toEqual({ event: 'replenishment_due', templateVersion: null });
+    expect(invalid.statusCode).toBe(400);
+    expect(repository.getLatestTemplateVersion).toHaveBeenCalledWith(WORKSPACE_ID, 'followup_performance');
+    expect(repository.createInteraction).not.toHaveBeenCalled();
+  });
+
+  it('rejects missing and extra render variables before rendering', async () => {
+    const repository = createRepository();
+    const app = await buildApp(repository, 'viewer');
+    apps.push(app);
+
+    const missing = await app.inject({
+      method: 'POST', url: `/api/ccos/templates/${TEMPLATE_ID}/render`, payload: { partner_name: 'Brand' },
+    });
+    const extra = await app.inject({
+      method: 'POST',
+      url: `/api/ccos/templates/${TEMPLATE_ID}/render`,
+      payload: { partner_name: 'Brand', product_name: 'Serum', unexpected: 'value' },
+    });
+
+    expect(missing.statusCode).toBe(400);
+    expect(missing.json()).toMatchObject({ error: 'VALIDATION_ERROR', details: { missing: ['product_name'] } });
+    expect(extra.statusCode).toBe(400);
+    expect(extra.json()).toMatchObject({ error: 'VALIDATION_ERROR', details: { extra: ['unexpected'] } });
+    expect(repository.renderTemplate).not.toHaveBeenCalled();
+  });
+
+  it('maps repository template-render validation failures to 400', async () => {
+    const repository = createRepository();
+    repository.renderTemplate.mockImplementationOnce(() => {
+      throw new Error('Invalid CCOS template render: unresolved placeholder');
+    });
+    const app = await buildApp(repository, 'viewer');
+    apps.push(app);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/ccos/templates/${TEMPLATE_ID}/render`,
+      payload: { partner_name: 'Brand', product_name: 'Serum' },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: 'VALIDATION_ERROR' });
+    expect(repository.renderTemplate).toHaveBeenCalledWith(templateVersion, {
+      partner_name: 'Brand', product_name: 'Serum',
+    });
+  });
+});

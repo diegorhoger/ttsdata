@@ -12,6 +12,9 @@ const CCOS_TABLES = [
   'ccos_products',
   'ccos_contents',
   'ccos_interactions',
+  'ccos_interaction_sources',
+  'ccos_template_versions',
+  'ccos_template_usage',
   'ccos_next_actions',
   'ccos_metric_snapshots',
 ] as const;
@@ -21,7 +24,7 @@ type ForeignKeyExpectation = {
   sourceColumns: string[];
   targetTable: string;
   targetColumns: string[];
-  deleteAction: 'c' | 'r';
+  deleteAction: 'c' | 'r' | 'a';
 };
 
 const workspaceForeignKey = (sourceTable: string): ForeignKeyExpectation => ({
@@ -38,7 +41,7 @@ const tenantForeignKey = (
   sourceTable: string,
   targetColumn: string,
   targetTable: string,
-  deleteAction: 'c' | 'r' = 'c',
+  deleteAction: 'c' | 'r' | 'a' = 'c',
 ): ForeignKeyExpectation => ({
   name,
   sourceTable,
@@ -53,6 +56,13 @@ const CCOS_FOREIGN_KEYS: ForeignKeyExpectation[] = [
   tenantForeignKey('ccos_contents_workspace_product_fk', 'ccos_contents', 'product_id', 'ccos_products'),
   workspaceForeignKey('ccos_interactions'),
   tenantForeignKey('ccos_interactions_workspace_partnership_fk', 'ccos_interactions', 'partnership_id', 'ccos_partnerships'),
+  tenantForeignKey('ccos_interactions_workspace_template_version_fk', 'ccos_interactions', 'template_version_id', 'ccos_template_versions', 'a'),
+  workspaceForeignKey('ccos_interaction_sources'),
+  tenantForeignKey('ccos_interaction_sources_workspace_interaction_fk', 'ccos_interaction_sources', 'interaction_id', 'ccos_interactions'),
+  workspaceForeignKey('ccos_template_versions'),
+  workspaceForeignKey('ccos_template_usage'),
+  tenantForeignKey('ccos_template_usage_workspace_template_version_fk', 'ccos_template_usage', 'template_version_id', 'ccos_template_versions', 'a'),
+  tenantForeignKey('ccos_template_usage_workspace_interaction_fk', 'ccos_template_usage', 'interaction_id', 'ccos_interactions'),
   workspaceForeignKey('ccos_metric_snapshots'),
   tenantForeignKey('ccos_metric_snapshots_workspace_store_fk', 'ccos_metric_snapshots', 'store_id', 'ccos_stores'),
   tenantForeignKey('ccos_metric_snapshots_workspace_partnership_fk', 'ccos_metric_snapshots', 'partnership_id', 'ccos_partnerships'),
@@ -175,6 +185,13 @@ async function assertForwardSchema(): Promise<void> {
   if (actionColumns.rowCount !== 4) {
     throw new Error(`Expected four next-action automation columns, found ${actionColumns.rowCount ?? 0}`);
   }
+
+  const interactionColumns = await pool.query<{ column_name: string }>(
+    `SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'ccos_interactions'
+        AND column_name = 'template_version_id'`,
+  );
+  if (interactionColumns.rowCount !== 1) throw new Error('Missing interaction template_version_id column');
 
   const foreignKeys = await pool.query<{
     name: string;

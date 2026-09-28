@@ -4,6 +4,8 @@ EXCEPTION
  WHEN duplicate_object THEN null;
 END $$;
 --> statement-breakpoint
+ALTER TABLE "ccos_interactions" ADD COLUMN "template_version_id" uuid;
+--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "ccos_interaction_sources" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"workspace_id" uuid NOT NULL,
@@ -33,6 +35,8 @@ CREATE TABLE IF NOT EXISTS "ccos_template_versions" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "ccos_template_versions_workspace_id_id_idx" ON "ccos_template_versions" USING btree ("workspace_id","id");
+--> statement-breakpoint
 DO $$ BEGIN
  ALTER TABLE "ccos_interaction_sources" ADD CONSTRAINT "ccos_interaction_sources_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE cascade ON UPDATE no action;
 EXCEPTION
@@ -40,13 +44,7 @@ EXCEPTION
 END $$;
 --> statement-breakpoint
 DO $$ BEGIN
- ALTER TABLE "ccos_interaction_sources" ADD CONSTRAINT "ccos_interaction_sources_workspace_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE cascade ON UPDATE no action;
-EXCEPTION
- WHEN duplicate_object THEN null;
-END $$;
---> statement-breakpoint
-DO $$ BEGIN
- ALTER TABLE "ccos_interaction_sources" ADD CONSTRAINT "ccos_interaction_sources_interaction_fk" FOREIGN KEY ("interaction_id") REFERENCES "public"."ccos_interactions"("id") ON DELETE cascade ON UPDATE no action;
+ ALTER TABLE "ccos_interaction_sources" ADD CONSTRAINT "ccos_interaction_sources_workspace_interaction_fk" FOREIGN KEY ("workspace_id", "interaction_id") REFERENCES "public"."ccos_interactions"("workspace_id", "id") ON DELETE cascade ON UPDATE no action;
 EXCEPTION
  WHEN duplicate_object THEN null;
 END $$;
@@ -58,19 +56,13 @@ EXCEPTION
 END $$;
 --> statement-breakpoint
 DO $$ BEGIN
- ALTER TABLE "ccos_template_usage" ADD CONSTRAINT "ccos_template_usage_workspace_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE cascade ON UPDATE no action;
+ ALTER TABLE "ccos_template_usage" ADD CONSTRAINT "ccos_template_usage_workspace_template_version_fk" FOREIGN KEY ("workspace_id", "template_version_id") REFERENCES "public"."ccos_template_versions"("workspace_id", "id") ON DELETE no action ON UPDATE no action;
 EXCEPTION
  WHEN duplicate_object THEN null;
 END $$;
 --> statement-breakpoint
 DO $$ BEGIN
- ALTER TABLE "ccos_template_usage" ADD CONSTRAINT "ccos_template_usage_template_version_fk" FOREIGN KEY ("template_version_id") REFERENCES "public"."ccos_template_versions"("id") ON DELETE cascade ON UPDATE no action;
-EXCEPTION
- WHEN duplicate_object THEN null;
-END $$;
---> statement-breakpoint
-DO $$ BEGIN
- ALTER TABLE "ccos_template_usage" ADD CONSTRAINT "ccos_template_usage_interaction_fk" FOREIGN KEY ("interaction_id") REFERENCES "public"."ccos_interactions"("id") ON DELETE cascade ON UPDATE no action;
+ ALTER TABLE "ccos_template_usage" ADD CONSTRAINT "ccos_template_usage_workspace_interaction_fk" FOREIGN KEY ("workspace_id", "interaction_id") REFERENCES "public"."ccos_interactions"("workspace_id", "id") ON DELETE cascade ON UPDATE no action;
 EXCEPTION
  WHEN duplicate_object THEN null;
 END $$;
@@ -82,7 +74,7 @@ EXCEPTION
 END $$;
 --> statement-breakpoint
 DO $$ BEGIN
- ALTER TABLE "ccos_template_versions" ADD CONSTRAINT "ccos_template_versions_workspace_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE cascade ON UPDATE no action;
+ ALTER TABLE "ccos_interactions" ADD CONSTRAINT "ccos_interactions_workspace_template_version_fk" FOREIGN KEY ("workspace_id", "template_version_id") REFERENCES "public"."ccos_template_versions"("workspace_id", "id") ON DELETE no action ON UPDATE no action;
 EXCEPTION
  WHEN duplicate_object THEN null;
 END $$;

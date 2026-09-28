@@ -490,4 +490,75 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
       [workspaceB, store.id],
     )).rejects.toMatchObject({ code: '23503' });
   });
+
+  it('allocates immutable template versions concurrently and round-trips JSON variables', async () => {
+    const created = await Promise.all(Array.from({ length: 5 }, (_, index) => repository.createTemplateVersion({
+      workspaceId: workspaceA, type: 'receipt', subject: `Receipt ${index}`,
+      body: 'Hello {{store_name}}', variables: ['store_name', 'product_name'],
+    })));
+    expect(created.map((row) => row.version).sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5]);
+    expect(created[0].variables).toEqual(['store_name', 'product_name']);
+    expect(await repository.getTemplateVersion(workspaceB, created[0].id)).toBeNull();
+    expect((await repository.getLatestTemplateVersion(workspaceA, 'receipt'))?.version).toBe(5);
+    expect(await repository.listTemplateVersions(workspaceB, 'receipt')).toEqual([]);
+  });
+
+  it('records template usage and validated sources in the partnership timeline atomically', async () => {
+    const store = await repository.createStore({ workspaceId: workspaceA, name: 'Timeline Store' });
+    const partnership = await repository.createPartnership({
+      workspaceId: workspaceA, storeId: store.id, type: 'gifting',
+    });
+    const product = await repository.createProduct({ workspaceId: workspaceA, partnershipId: partnership.id, name: 'Sample' });
+    const content = await repository.createContent({ workspaceId: workspaceA, productId: product.id, platform: 'tiktok' });
+    const action = await repository.createNextAction({
+      workspaceId: workspaceA, target: { type: 'partnership', id: partnership.id }, title: 'Follow up',
+    });
+    const template = await repository.createTemplateVersion({
+      workspaceId: workspaceA, type: 'sample_confirm', subject: 'Confirmed', body: 'Thank you', variables: [],
+    });
+    const sourceLinks = [
+      { sourceType: 'partnership' as const, sourceId: partnership.id },
+      { sourceType: 'product' as const, sourceId: product.id },
+      { sourceType: 'content' as const, sourceId: content.id },
+      { sourceType: 'action' as const, sourceId: action.id },
+      { sourceType: 'template_version' as const, sourceId: template.id },
+    ];
+    const interaction = await repository.createInteraction({
+      workspaceId: workspaceA, partnershipId: partnership.id, direction: 'outbound',
+      channel: 'email', summary: 'Sent manually', templateVersionId: template.id, sourceLinks,
+    });
+    expect(interaction.templateVersionId).toBe(template.id);
+    expect((await repository.listTimeline(workspaceA, partnership.id)).find((row) => row.id === interaction.id)?.sources)
+      .toEqual(expect.arrayContaining(sourceLinks.map((link) => expect.objectContaining(link))));
+    expect(await repository.listTimeline(workspaceB, partnership.id)).toEqual([]);
+    expect(await repository.getInteractionSources(workspaceB, interaction.id)).toEqual([]);
+    const usage = await pool.query<{ template_version_id: string }>(
+      'SELECT template_version_id FROM ccos_template_usage WHERE workspace_id = $1 AND interaction_id = $2',
+      [workspaceA, interaction.id],
+    );
+    expect(usage.rows[0].template_version_id).toBe(template.id);
+
+    const other = await repository.createPartnership({ workspaceId: workspaceA, storeId: store.id, type: 'affiliate' });
+    const before = (await repository.listInteractions(workspaceA, partnership.id)).length;
+    await expect(repository.createInteraction({
+      workspaceId: workspaceA, partnershipId: partnership.id, direction: 'outbound', channel: 'email',
+      summary: 'Invalid source', templateVersionId: template.id,
+      sourceLinks: [{ sourceType: 'partnership', sourceId: other.id }],
+    })).rejects.toThrow('source not found');
+    expect(await repository.listInteractions(workspaceA, partnership.id)).toHaveLength(before);
+
+    await expect(repository.createInteraction({
+      workspaceId: workspaceB, partnershipId: partnership.id, direction: 'outbound', channel: 'email',
+      summary: 'Wrong tenant', templateVersionId: template.id,
+    })).rejects.toThrow('partnership not found');
+    await expect(pool.query(
+      `INSERT INTO ccos_template_usage (workspace_id, template_version_id, interaction_id) VALUES ($1, $2, $3)`,
+      [workspaceB, template.id, interaction.id],
+    )).rejects.toMatchObject({ code: '23503' });
+    await expect(pool.query(
+      `INSERT INTO ccos_interaction_sources (workspace_id, interaction_id, source_type, source_id)
+       VALUES ($1, $2, 'product', $3)`,
+      [workspaceB, interaction.id, product.id],
+    )).rejects.toMatchObject({ code: '23503' });
+  });
 });

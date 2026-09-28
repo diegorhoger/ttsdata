@@ -826,6 +826,35 @@ export class CCOSRepository {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      // Lock the partnership while checking polymorphic sources: all linked entities must
+      // belong to this same timeline, not merely to the same tenant.
+      const partnership = await client.query(
+        'SELECT id FROM ccos_partnerships WHERE workspace_id = $1 AND id = $2 FOR SHARE',
+        [input.workspaceId, input.partnershipId],
+      );
+      if (partnership.rowCount !== 1) throw new Error('CCOS partnership not found in workspace');
+      for (const link of input.sourceLinks ?? []) {
+        const sourceQuery: Record<CCOSInteractionSourceType, string> = {
+          partnership: `SELECT id FROM ccos_partnerships WHERE workspace_id = $1 AND id = $2 AND id = $3 FOR SHARE`,
+          product: `SELECT id FROM ccos_products WHERE workspace_id = $1 AND id = $2 AND partnership_id = $3 FOR SHARE`,
+          content: `SELECT c.id FROM ccos_contents c JOIN ccos_products p ON p.workspace_id = c.workspace_id AND p.id = c.product_id
+                    WHERE c.workspace_id = $1 AND c.id = $2 AND p.partnership_id = $3 FOR SHARE OF c, p`,
+          action: `SELECT a.id FROM ccos_next_actions a
+                   LEFT JOIN ccos_products p ON p.workspace_id = a.workspace_id AND p.id = a.product_id
+                   LEFT JOIN ccos_contents c ON c.workspace_id = a.workspace_id AND c.id = a.content_id
+                   LEFT JOIN ccos_products cp ON cp.workspace_id = c.workspace_id AND cp.id = c.product_id
+                   LEFT JOIN ccos_partnerships ps ON ps.workspace_id = a.workspace_id AND ps.id = $3
+                   LEFT JOIN ccos_interactions i ON i.workspace_id = a.workspace_id AND i.id = a.interaction_id
+                   WHERE a.workspace_id = $1 AND a.id = $2 AND ps.id IS NOT NULL AND
+                   (a.partnership_id = $3 OR p.partnership_id = $3 OR cp.partnership_id = $3
+                    OR i.partnership_id = $3 OR a.store_id = ps.store_id) FOR SHARE OF a`,
+          template_version: `SELECT id FROM ccos_template_versions WHERE workspace_id = $1 AND id = $2 FOR SHARE`,
+        };
+        if (!Object.hasOwn(sourceQuery, link.sourceType)) throw new Error('Invalid CCOS interaction source type');
+        const source = await client.query(sourceQuery[link.sourceType],
+          [input.workspaceId, link.sourceId, input.partnershipId]);
+        if (source.rowCount !== 1) throw new Error('CCOS interaction source not found in partnership/workspace');
+      }
       const occurredAt = input.occurredAt ?? new Date();
       const result = await client.query<InteractionRow>(
         `INSERT INTO ccos_interactions (workspace_id, partnership_id, direction, channel, summary, occurred_at, source, template_version_id)
@@ -876,7 +905,7 @@ export class CCOSRepository {
     const interactionIds = interactions.map(i => i.id);
     if (interactionIds.length === 0) return [];
 
-    const placeholders = interactionIds.map((_, i) => `$${i + 3}`).join(',');
+    const placeholders = interactionIds.map((_, i) => `$${i + 2}`).join(',');
     const sourcesResult = await this.pool.query<InteractionSourceRow>(
       `SELECT id, workspace_id, interaction_id, source_type, source_id, created_at
        FROM ccos_interaction_sources WHERE workspace_id = $1 AND interaction_id IN (${placeholders})`,
@@ -910,6 +939,9 @@ export class CCOSRepository {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      // Serialize allocation even when there is no prior version to row-lock.
+      const workspace = await client.query('SELECT id FROM workspaces WHERE id = $1 FOR UPDATE', [input.workspaceId]);
+      if (workspace.rowCount !== 1) throw new Error('CCOS workspace not found');
       const versionResult = await client.query<{ max_version: number }>(
         `SELECT COALESCE(MAX(version), 0) + 1 AS max_version FROM ccos_template_versions WHERE workspace_id = $1 AND type = $2`,
         [input.workspaceId, input.type],
@@ -918,7 +950,7 @@ export class CCOSRepository {
       const result = await client.query<TemplateVersionRow>(
         `INSERT INTO ccos_template_versions (workspace_id, type, version, subject, body, variables)
          VALUES ($1, $2, $3, $4, $5, $6) RETURNING ${TEMPLATE_VERSION_COLUMNS}`,
-        [input.workspaceId, input.type, nextVersion, input.subject, input.body, input.variables ?? []],
+        [input.workspaceId, input.type, nextVersion, input.subject, input.body, JSON.stringify(input.variables ?? [])],
       );
       if (result.rowCount !== 1) throw new Error('CCOS template version insert did not return exactly one row');
       await client.query('COMMIT');
@@ -1014,8 +1046,10 @@ export interface CreateCCOSInteractionInput {
   occurredAt?: Date;
   source?: string;
   templateVersionId?: string;
-  sourceLinks?: Array<{ sourceType: string; sourceId: string }>;
+  sourceLinks?: Array<{ sourceType: CCOSInteractionSourceType; sourceId: string }>;
 }
+
+export type CCOSInteractionSourceType = 'product' | 'content' | 'partnership' | 'action' | 'template_version';
 
 export interface CCOSInteractionRecord {
   id: string;

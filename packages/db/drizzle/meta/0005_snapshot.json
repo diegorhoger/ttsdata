@@ -416,27 +416,16 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
-        "ccos_interaction_sources_workspace_id_fk": {
-          "name": "ccos_interaction_sources_workspace_id_fk",
-          "tableFrom": "ccos_interaction_sources",
-          "tableTo": "workspaces",
-          "columnsFrom": [
-            "workspace_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "ccos_interaction_sources_interaction_fk": {
-          "name": "ccos_interaction_sources_interaction_fk",
+        "ccos_interaction_sources_workspace_interaction_fk": {
+          "name": "ccos_interaction_sources_workspace_interaction_fk",
           "tableFrom": "ccos_interaction_sources",
           "tableTo": "ccos_interactions",
           "columnsFrom": [
+            "workspace_id",
             "interaction_id"
           ],
           "columnsTo": [
+            "workspace_id",
             "id"
           ],
           "onDelete": "cascade",
@@ -500,6 +489,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'manual'"
+        },
+        "template_version_id": {
+          "name": "template_version_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
@@ -571,6 +566,15 @@
             "id"
           ],
           "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "ccos_interactions_workspace_template_version_fk": {
+          "name": "ccos_interactions_workspace_template_version_fk",
+          "tableFrom": "ccos_interactions",
+          "tableTo": "ccos_template_versions",
+          "columnsFrom": ["workspace_id", "template_version_id"],
+          "columnsTo": ["workspace_id", "id"],
+          "onDelete": "no action",
           "onUpdate": "no action"
         },
         "ccos_interactions_workspace_partnership_fk": {
@@ -1692,40 +1696,31 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
-        "ccos_template_usage_workspace_id_fk": {
-          "name": "ccos_template_usage_workspace_id_fk",
-          "tableFrom": "ccos_template_usage",
-          "tableTo": "workspaces",
-          "columnsFrom": [
-            "workspace_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "ccos_template_usage_template_version_fk": {
-          "name": "ccos_template_usage_template_version_fk",
+        "ccos_template_usage_workspace_template_version_fk": {
+          "name": "ccos_template_usage_workspace_template_version_fk",
           "tableFrom": "ccos_template_usage",
           "tableTo": "ccos_template_versions",
           "columnsFrom": [
+            "workspace_id",
             "template_version_id"
           ],
           "columnsTo": [
+            "workspace_id",
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "ccos_template_usage_interaction_fk": {
-          "name": "ccos_template_usage_interaction_fk",
+        "ccos_template_usage_workspace_interaction_fk": {
+          "name": "ccos_template_usage_workspace_interaction_fk",
           "tableFrom": "ccos_template_usage",
           "tableTo": "ccos_interactions",
           "columnsFrom": [
+            "workspace_id",
             "interaction_id"
           ],
           "columnsTo": [
+            "workspace_id",
             "id"
           ],
           "onDelete": "cascade",
@@ -1801,6 +1796,17 @@
         }
       },
       "indexes": {
+        "ccos_template_versions_workspace_id_id_idx": {
+          "name": "ccos_template_versions_workspace_id_id_idx",
+          "columns": [
+            {"expression": "workspace_id", "isExpression": false, "asc": true, "nulls": "last"},
+            {"expression": "id", "isExpression": false, "asc": true, "nulls": "last"}
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "ccos_template_versions_workspace_type_version_idx": {
           "name": "ccos_template_versions_workspace_type_version_idx",
           "columns": [
@@ -1853,19 +1859,6 @@
       "foreignKeys": {
         "ccos_template_versions_workspace_id_workspaces_id_fk": {
           "name": "ccos_template_versions_workspace_id_workspaces_id_fk",
-          "tableFrom": "ccos_template_versions",
-          "tableTo": "workspaces",
-          "columnsFrom": [
-            "workspace_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "ccos_template_versions_workspace_id_fk": {
-          "name": "ccos_template_versions_workspace_id_fk",
           "tableFrom": "ccos_template_versions",
           "tableTo": "workspaces",
           "columnsFrom": [
