@@ -391,6 +391,15 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
     await expect(repository.getContent(workspaceA, second.id)).resolves.toMatchObject({
       adAuthorizationStatus: null, adAuthorizationCode: null,
     });
+    await repository.updateContent(workspaceA, second.id, { status: 'planned' });
+    await repository.updateContent(workspaceA, second.id, { status: 'filming' });
+    await repository.updateContent(workspaceA, second.id, { status: 'editing' });
+    await repository.updateContent(workspaceA, second.id, { status: 'ready' });
+    await repository.updateContent(workspaceA, second.id, {
+      status: 'published',
+      publishedAt: new Date('2026-09-28T11:00:00.000Z'),
+      publicationUrl: 'https://www.tiktok.com/@creator/video/no-authorization',
+    });
     await expect(repository.updateContent(workspaceA, second.id, { status: 'ads_authorized' }))
       .rejects.toThrow('ads_authorized status requires authorized details');
     const pendingActions = await pool.query<{ rule_key: string; status: string; content_id: string }>(
