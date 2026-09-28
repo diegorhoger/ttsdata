@@ -85,6 +85,7 @@ if (!parsedUrl.pathname.slice(1).endsWith('_test')) {
 const packageRoot = resolve(process.cwd());
 const migrationsFolder = resolve(packageRoot, 'drizzle');
 const rollbackPaths = [
+  resolve(migrationsFolder, 'rollback/0004_brainy_black_bird.down.sql'),
   resolve(migrationsFolder, 'rollback/0003_silly_otto_octavius.down.sql'),
   resolve(migrationsFolder, 'rollback/0002_worried_lyja.down.sql'),
 ] as const;
@@ -121,7 +122,7 @@ async function getMigrationCreatedAt(): Promise<number[]> {
   const journal = JSON.parse(await readFile(journalPath, 'utf8')) as {
     entries?: Array<{ tag?: string; when?: number }>;
   };
-  const tags = ['0002_worried_lyja', '0003_silly_otto_octavius'];
+  const tags = ['0002_worried_lyja', '0003_silly_otto_octavius', '0004_brainy_black_bird'];
   const entries = tags.map((tag) => journal.entries?.find((entry) => entry.tag === tag));
   if (entries.some((entry) => !entry || typeof entry.when !== 'number')) {
     throw new Error('Migration journal is missing a CCOS migration entry');
@@ -162,6 +163,16 @@ async function assertForwardSchema(): Promise<void> {
   );
   if (productColumns.rowCount !== 5) {
     throw new Error(`Expected five product commercial/logistics columns, found ${productColumns.rowCount ?? 0}`);
+  }
+
+  const actionColumns = await pool.query<{ column_name: string }>(
+    `SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'ccos_next_actions'
+        AND column_name = ANY($1::text[])`,
+    [['rule_key', 'dedupe_key', 'waiting_reason', 'resolution_reason']],
+  );
+  if (actionColumns.rowCount !== 4) {
+    throw new Error(`Expected four next-action automation columns, found ${actionColumns.rowCount ?? 0}`);
   }
 
   const foreignKeys = await pool.query<{
@@ -254,8 +265,8 @@ async function main(): Promise<void> {
       'DELETE FROM drizzle.__drizzle_migrations WHERE created_at = ANY($1::bigint[]) RETURNING id',
       [migrationCreatedAt],
     );
-    if (deleted.rowCount !== 2) {
-      throw new Error(`Expected two CCOS migration journal rows, removed ${deleted.rowCount ?? 0}`);
+    if (deleted.rowCount !== 3) {
+      throw new Error(`Expected three CCOS migration journal rows, removed ${deleted.rowCount ?? 0}`);
     }
     await client.query('COMMIT');
   } catch (error) {

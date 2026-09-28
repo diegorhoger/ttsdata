@@ -11,6 +11,7 @@ const STORE_ID = '22222222-2222-4222-8222-222222222222';
 const PARTNERSHIP_ID = '33333333-3333-4333-8333-333333333333';
 const PRODUCT_ID = '55555555-5555-4555-8555-555555555555';
 const CONTENT_ID = '66666666-6666-4666-8666-666666666666';
+const ACTION_ID = '77777777-7777-4777-8777-777777777777';
 const NOW = new Date('2026-09-27T12:00:00.000Z');
 
 const store = {
@@ -76,6 +77,22 @@ const content = {
   updatedAt: NOW,
 };
 
+const nextAction = {
+  id: ACTION_ID,
+  workspaceId: WORKSPACE_ID,
+  target: { type: 'product' as const, id: PRODUCT_ID },
+  title: 'Request a sample',
+  ruleKey: null,
+  status: 'open' as const,
+  priority: 'normal' as const,
+  dueAt: null,
+  ownerUserId: null,
+  generatedAutomatically: false,
+  completedAt: null,
+  createdAt: NOW,
+  updatedAt: NOW,
+};
+
 function createRepository() {
   return {
     createStore: vi.fn().mockResolvedValue(store),
@@ -94,6 +111,10 @@ function createRepository() {
     listContents: vi.fn().mockResolvedValue([content]),
     getContent: vi.fn().mockResolvedValue(content),
     updateContent: vi.fn().mockResolvedValue(content),
+    createNextAction: vi.fn().mockResolvedValue(nextAction),
+    listAttentionInbox: vi.fn().mockResolvedValue([nextAction]),
+    getNextAction: vi.fn().mockResolvedValue(nextAction),
+    updateNextAction: vi.fn().mockResolvedValue(nextAction),
   };
 }
 
@@ -521,5 +542,115 @@ describe('CCOS store and partnership routes', () => {
       publishedAt: null,
       publicationUrl: null,
     });
+  });
+
+  it('lists the authenticated workspace attention inbox', async () => {
+    const repository = createRepository();
+    const app = await buildApp(repository);
+    apps.push(app);
+
+    const response = await app.inject({ method: 'GET', url: '/api/ccos/next-actions' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ nextActions: [{
+      id: ACTION_ID,
+      workspaceId: WORKSPACE_ID,
+      target: { type: 'product', id: PRODUCT_ID },
+      status: 'open',
+    }] });
+    expect(repository.listAttentionInbox).toHaveBeenCalledWith(WORKSPACE_ID);
+  });
+
+  it('creates a manual next action using the authenticated workspace and target union', async () => {
+    const repository = createRepository();
+    const app = await buildApp(repository);
+    apps.push(app);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/ccos/next-actions',
+      payload: {
+        target: { type: 'product', id: PRODUCT_ID },
+        title: 'Request a sample',
+        priority: 'high',
+      },
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(repository.createNextAction).toHaveBeenCalledWith({
+      workspaceId: WORKSPACE_ID,
+      target: { type: 'product', id: PRODUCT_ID },
+      title: 'Request a sample',
+      priority: 'high',
+      generatedAutomatically: false,
+    });
+  });
+
+  it('gets and updates a next action with workspace scope', async () => {
+    const repository = createRepository();
+    const app = await buildApp(repository);
+    apps.push(app);
+
+    const readResponse = await app.inject({ method: 'GET', url: `/api/ccos/next-actions/${ACTION_ID}` });
+    const updateResponse = await app.inject({
+      method: 'PATCH',
+      url: `/api/ccos/next-actions/${ACTION_ID}`,
+      payload: { status: 'completed' },
+    });
+
+    expect(readResponse.statusCode).toBe(200);
+    expect(updateResponse.statusCode).toBe(200);
+    expect(repository.getNextAction).toHaveBeenCalledWith(WORKSPACE_ID, ACTION_ID);
+    expect(repository.updateNextAction).toHaveBeenCalledWith(WORKSPACE_ID, ACTION_ID, {
+      status: 'completed',
+    });
+  });
+
+  it('requires owner/admin for next-action writes while viewers can read', async () => {
+    const repository = createRepository();
+    const app = await buildApp(repository, 'viewer');
+    apps.push(app);
+
+    const readResponse = await app.inject({ method: 'GET', url: `/api/ccos/next-actions/${ACTION_ID}` });
+    const createResponse = await app.inject({
+      method: 'POST', url: '/api/ccos/next-actions',
+      payload: { target: { type: 'store', id: STORE_ID }, title: 'Contact the store' },
+    });
+    const updateResponse = await app.inject({
+      method: 'PATCH', url: `/api/ccos/next-actions/${ACTION_ID}`, payload: { status: 'completed' },
+    });
+
+    expect(readResponse.statusCode).toBe(200);
+    expect(createResponse.statusCode).toBe(403);
+    expect(updateResponse.statusCode).toBe(403);
+    expect(repository.createNextAction).not.toHaveBeenCalled();
+    expect(repository.updateNextAction).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed next-action IDs, targets, and strict payload violations before writes', async () => {
+    const repository = createRepository();
+    const app = await buildApp(repository);
+    apps.push(app);
+
+    const badIdResponse = await app.inject({
+      method: 'GET', url: '/api/ccos/next-actions/not-a-uuid',
+    });
+    const badTargetResponse = await app.inject({
+      method: 'POST', url: '/api/ccos/next-actions',
+      payload: { target: { type: 'product', id: 'not-a-uuid' }, title: 'Do the work' },
+    });
+    const extraFieldResponse = await app.inject({
+      method: 'POST', url: '/api/ccos/next-actions',
+      payload: {
+        target: { type: 'product', id: PRODUCT_ID },
+        title: 'Do the work', generatedAutomatically: true,
+      },
+    });
+
+    expect(badIdResponse.statusCode).toBe(400);
+    expect(badTargetResponse.statusCode).toBe(400);
+    expect(extraFieldResponse.statusCode).toBe(400);
+    expect(repository.getNextAction).not.toHaveBeenCalled();
+    expect(repository.createNextAction).not.toHaveBeenCalled();
   });
 });
