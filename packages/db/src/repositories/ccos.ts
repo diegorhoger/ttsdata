@@ -418,6 +418,10 @@ export class CCOSRepository {
       );
       const current = selected.rows[0] ? mapNextAction(selected.rows[0]) : null;
       if (!current) { await client.query('ROLLBACK'); return null; }
+      if (current.generatedAutomatically && input.status !== undefined
+        && ['completed', 'cancelled'].includes(input.status)) {
+        throw new Error('Generated CCOS next actions are resolved only by a target lifecycle transition');
+      }
       if (input.status !== undefined && input.status !== current.status
         && !NEXT_ACTION_TRANSITIONS[current.status].includes(input.status)) {
         throw new Error(`Invalid CCOS next action transition: ${current.status} -> ${input.status}`);

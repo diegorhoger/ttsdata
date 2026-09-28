@@ -156,6 +156,8 @@ const updateNextActionSchema = z.object({
   priority: priority.optional(),
   dueAt: dateValue.nullable().optional(),
   ownerUserId: z.string().uuid().nullable().optional(),
+  waitingReason: z.string().trim().min(1).max(2_000).nullable().optional(),
+  resolutionReason: z.string().trim().min(1).max(2_000).nullable().optional(),
 }).strict().refine((body) => Object.keys(body).length > 0, 'At least one field is required');
 
 type StorePartnershipRepository = {

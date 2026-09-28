@@ -441,13 +441,22 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
     await expect(repository.listAttentionInbox(workspaceB)).resolves.not.toContainEqual(
       expect.objectContaining({ id: active[0].id }),
     );
-    await repository.updateNextAction(workspaceA, active[0].id, {
+    await expect(repository.updateNextAction(workspaceA, active[0].id, {
       status: 'completed', resolutionReason: 'Follow-up recorded',
-    });
-    const completed = await repository.getNextAction(workspaceA, active[0].id);
-    expect(completed).toMatchObject({ status: 'completed', resolutionReason: 'Follow-up recorded' });
-    expect(completed?.completedAt).toBeInstanceOf(Date);
+    })).rejects.toThrow('Generated CCOS next actions are resolved only by a target lifecycle transition');
+    const preserved = await repository.getNextAction(workspaceA, active[0].id);
+    expect(preserved).toMatchObject({ status: 'open', completedAt: null });
     await expect(repository.getNextAction(workspaceB, active[0].id)).resolves.toBeNull();
+
+    const manual = await repository.createNextAction({
+      workspaceId: workspaceA, target: { type: 'partnership', id: partnership.id }, title: 'Manual audit',
+    });
+    await repository.updateNextAction(workspaceA, manual.id, {
+      status: 'completed', resolutionReason: 'Audit complete',
+    });
+    await expect(repository.getNextAction(workspaceA, manual.id)).resolves.toMatchObject({
+      status: 'completed', resolutionReason: 'Audit complete',
+    });
   });
 
   it('rejects dangling, ambiguous and cross-workspace action targets', async () => {
