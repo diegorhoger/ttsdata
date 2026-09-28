@@ -434,7 +434,8 @@ export async function registerCCOSRoutes(app: FastifyInstance, options: CCOSRout
       if (!nextAction) throw new AppError('Next action not found', 404, 'NOT_FOUND');
       return reply.send({ nextAction });
     } catch (error) {
-      if (error instanceof Error && error.message.startsWith('Invalid CCOS next action transition:')) {
+      if (error instanceof Error && (error.message.startsWith('Invalid CCOS next action transition:')
+        || error.message === 'Generated CCOS next actions are resolved only by a target lifecycle transition')) {
         throw new AppError(error.message, 409, 'INVALID_TRANSITION');
       }
       throw error;
