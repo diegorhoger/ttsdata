@@ -11,6 +11,7 @@ import { getNextActionRule, type NextActionRuleResult } from '../ccos/next-actio
 
 export type PartnershipType = 'inbound_invite' | 'outbound_prospecting' | 'affiliate' | 'paid_campaign' | 'gifting';
 export type CCOSPriority = 'low' | 'normal' | 'high' | 'urgent';
+export type CCOSAdAuthorizationStatus = 'pending' | 'authorized' | 'unavailable';
 export type CCOSNextActionStatus = 'open' | 'in_progress' | 'waiting' | 'completed' | 'cancelled';
 export type CCOSActionTarget =
   | { type: 'store'; id: string }
@@ -105,6 +106,10 @@ export interface UpdateCCOSContentInput {
   scheduledAt?: Date | null;
   publishedAt?: Date | null;
   publicationUrl?: string | null;
+  adAuthorizationStatus?: CCOSAdAuthorizationStatus | null;
+  adAuthorizationCode?: string | null;
+  adAuthorizationCreatedAt?: Date | null;
+  adAuthorizationExpiresAt?: Date | null;
 }
 
 export interface CreateCCOSNextActionInput {
@@ -188,6 +193,10 @@ export interface CCOSContentRecord {
   scheduledAt: Date | null;
   publishedAt: Date | null;
   publicationUrl: string | null;
+  adAuthorizationStatus: CCOSAdAuthorizationStatus | null;
+  adAuthorizationCode: string | null;
+  adAuthorizationCreatedAt: Date | null;
+  adAuthorizationExpiresAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -229,7 +238,10 @@ type ProductRow = {
 type ContentRow = {
   id: string; workspace_id: string; product_id: string; status: ContentStatus; platform: string;
   format: string | null; concept: string | null; scheduled_at: Date | null;
-  published_at: Date | null; publication_url: string | null; created_at: Date; updated_at: Date;
+  published_at: Date | null; publication_url: string | null;
+  ad_authorization_status: CCOSAdAuthorizationStatus | null; ad_authorization_code: string | null;
+  ad_authorization_created_at: Date | null; ad_authorization_expires_at: Date | null;
+  created_at: Date; updated_at: Date;
 };
 type NextActionRow = {
   id: string; workspace_id: string; store_id: string | null; partnership_id: string | null;
@@ -247,7 +259,8 @@ const PRODUCT_COLUMNS = `id, workspace_id, partnership_id, name, sku, product_ur
   commission_rate, commission_amount, stock_state, status, tracking_code, shipped_at, received_at,
   priority, source, provenance, created_at, updated_at`;
 const CONTENT_COLUMNS = `id, workspace_id, product_id, status, platform, format, concept,
-  scheduled_at, published_at, publication_url, created_at, updated_at`;
+  scheduled_at, published_at, publication_url, ad_authorization_status, ad_authorization_code,
+  ad_authorization_created_at, ad_authorization_expires_at, created_at, updated_at`;
 const NEXT_ACTION_COLUMNS = `id, workspace_id, store_id, partnership_id, product_id, content_id,
   interaction_id, title, rule_key, dedupe_key, waiting_reason, resolution_reason, status, priority, due_at, owner_user_id,
   generated_automatically, completed_at, created_at, updated_at`;
@@ -286,6 +299,9 @@ function mapContent(row: ContentRow): CCOSContentRecord {
     id: row.id, workspaceId: row.workspace_id, productId: row.product_id, status: row.status,
     platform: row.platform, format: row.format, concept: row.concept, scheduledAt: row.scheduled_at,
     publishedAt: row.published_at, publicationUrl: row.publication_url,
+    adAuthorizationStatus: row.ad_authorization_status, adAuthorizationCode: row.ad_authorization_code,
+    adAuthorizationCreatedAt: row.ad_authorization_created_at,
+    adAuthorizationExpiresAt: row.ad_authorization_expires_at,
     createdAt: row.created_at, updatedAt: row.updated_at,
   };
 }
@@ -339,11 +355,15 @@ export class CCOSRepository {
     rule: NextActionRuleResult,
   ): Promise<void> {
     const targetColumn = `${target.type}_id`;
+    const preserveAuthorizationRule = target.type === 'content'
+      ? "AND rule_key NOT LIKE 'content.ad-auth.%'"
+      : '';
     await client.query(
       `UPDATE ccos_next_actions
           SET status = 'cancelled', completed_at = NOW(), resolution_reason = $3, updated_at = NOW()
         WHERE workspace_id = $1 AND ${targetColumn} = $2 AND generated_automatically = true
-          AND status IN ('open', 'in_progress', 'waiting') AND rule_key IS DISTINCT FROM $4`,
+          AND status IN ('open', 'in_progress', 'waiting') AND rule_key IS DISTINCT FROM $4
+          ${preserveAuthorizationRule}`,
       [workspaceId, target.id, rule.kind === 'terminal' ? rule.reason : 'Superseded by lifecycle change', rule.ruleKey],
     );
     if (rule.kind === 'terminal') return;
@@ -361,6 +381,64 @@ export class CCOSRepository {
       [workspaceId, storeId, partnershipId, productId, contentId, interactionId, rule.title, rule.ruleKey,
         dedupeKey, rule.kind === 'waiting' ? rule.reason : null, rule.kind === 'waiting' ? 'waiting' : 'open', rule.priority],
     );
+  }
+
+  private async syncContentAuthorizationActions(
+    client: PoolClient,
+    workspaceId: string,
+    content: Pick<CCOSContentRecord,
+      'id' | 'adAuthorizationStatus' | 'adAuthorizationCode' | 'adAuthorizationExpiresAt'>,
+    affectedRules: string[],
+  ): Promise<void> {
+    if (affectedRules.length === 0) return;
+    await client.query(
+      `UPDATE ccos_next_actions
+          SET status = 'cancelled', completed_at = NOW(),
+              resolution_reason = 'Ad authorization details changed', updated_at = NOW()
+        WHERE workspace_id = $1 AND content_id = $2 AND generated_automatically = true
+          AND rule_key = ANY($3::text[]) AND status IN ('open', 'in_progress', 'waiting')`,
+      [workspaceId, content.id, affectedRules],
+    );
+
+    const actions: Array<{
+      ruleKey: string; title: string; priority: CCOSPriority; dueAt: Date | null;
+      status: CCOSNextActionStatus; waitingReason: string | null;
+    }> = [];
+    if (content.adAuthorizationStatus === 'pending') {
+      actions.push({
+        ruleKey: 'content.ad-auth.follow-up', title: 'Follow up on ad authorization', priority: 'normal',
+        dueAt: null, status: 'waiting',
+        waitingReason: 'Authorization is pending; follow up with the creator for an update.',
+      });
+    } else if (content.adAuthorizationStatus === 'authorized') {
+      actions.push({
+        ruleKey: 'content.ad-auth.share',
+        title: content.adAuthorizationCode ? 'Share ad authorization code' : 'Record and share ad authorization code',
+        priority: 'high', dueAt: null, status: 'open', waitingReason: null,
+      });
+      if (content.adAuthorizationExpiresAt) {
+        actions.push({
+          ruleKey: 'content.ad-auth.expiry', title: 'Review ad authorization expiry', priority: 'high',
+          dueAt: content.adAuthorizationExpiresAt, status: 'open', waitingReason: null,
+        });
+      }
+    }
+    for (const action of actions.filter((candidate) => affectedRules.includes(candidate.ruleKey))) {
+      await client.query(
+        `INSERT INTO ccos_next_actions
+         (workspace_id, content_id, title, rule_key, dedupe_key, waiting_reason, status, priority, due_at,
+          generated_automatically)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true)
+         ON CONFLICT (workspace_id, dedupe_key)
+           WHERE generated_automatically = true AND status IN ('open', 'in_progress', 'waiting')
+         DO UPDATE SET title = EXCLUDED.title, waiting_reason = EXCLUDED.waiting_reason,
+           status = EXCLUDED.status, priority = EXCLUDED.priority, due_at = EXCLUDED.due_at,
+           updated_at = NOW()`,
+        [workspaceId, content.id, action.title, action.ruleKey,
+          `${action.ruleKey}:content:${content.id}`, action.waitingReason, action.status, action.priority,
+          action.dueAt],
+      );
+    }
   }
 
   async createNextAction(input: CreateCCOSNextActionInput): Promise<CCOSNextActionRecord> {
@@ -418,8 +496,13 @@ export class CCOSRepository {
       );
       const current = selected.rows[0] ? mapNextAction(selected.rows[0]) : null;
       if (!current) { await client.query('ROLLBACK'); return null; }
+      const manuallyCompletableAuthorizationAction = current.generatedAutomatically
+        && current.ruleKey?.startsWith('content.ad-auth.')
+        && input.status === 'completed'
+        && Boolean(input.resolutionReason);
       if (current.generatedAutomatically && input.status !== undefined
-        && ['completed', 'cancelled'].includes(input.status)) {
+        && ['completed', 'cancelled'].includes(input.status)
+        && !manuallyCompletableAuthorizationAction) {
         throw new Error('Generated CCOS next actions are resolved only by a target lifecycle transition');
       }
       if (input.status !== undefined && input.status !== current.status
@@ -743,7 +826,9 @@ export class CCOSRepository {
       await client.query('BEGIN');
       const selected = await client.query<ContentRow & { partnership_id: string }>(
         `SELECT c.id, c.workspace_id, c.product_id, c.status, c.platform, c.format, c.concept,
-                c.scheduled_at, c.published_at, c.publication_url, c.created_at, c.updated_at,
+                c.scheduled_at, c.published_at, c.publication_url, c.ad_authorization_status,
+                c.ad_authorization_code, c.ad_authorization_created_at, c.ad_authorization_expires_at,
+                c.created_at, c.updated_at,
                 p.partnership_id
            FROM ccos_contents c
            JOIN ccos_products p ON p.workspace_id = c.workspace_id AND p.id = c.product_id
@@ -770,6 +855,29 @@ export class CCOSRepository {
         && (!effectivePublishedAt || !effectivePublicationUrl)) {
         throw new Error('Invalid CCOS content publication: publishedAt and publicationUrl are required');
       }
+      const effectiveAdAuthorizationCreatedAt = input.adAuthorizationCreatedAt !== undefined
+        ? input.adAuthorizationCreatedAt : current.adAuthorizationCreatedAt;
+      const effectiveAdAuthorizationExpiresAt = input.adAuthorizationExpiresAt !== undefined
+        ? input.adAuthorizationExpiresAt : current.adAuthorizationExpiresAt;
+      const effectiveAdAuthorizationStatus = input.adAuthorizationStatus !== undefined
+        ? input.adAuthorizationStatus : current.adAuthorizationStatus;
+      const effectiveAdAuthorizationCode = input.adAuthorizationCode !== undefined
+        ? input.adAuthorizationCode : current.adAuthorizationCode;
+      if (effectiveAdAuthorizationStatus === 'authorized'
+        && (!effectiveAdAuthorizationCode || !effectiveAdAuthorizationCreatedAt)) {
+        throw new Error('Invalid CCOS content ad authorization: authorized status requires code and creation time');
+      }
+      if (effectiveAdAuthorizationStatus !== 'authorized'
+        && (effectiveAdAuthorizationCode || effectiveAdAuthorizationCreatedAt || effectiveAdAuthorizationExpiresAt)) {
+        throw new Error('Invalid CCOS content ad authorization: pending, unavailable, or unset status cannot retain authorization details');
+      }
+      if (effectiveStatus === 'ads_authorized' && effectiveAdAuthorizationStatus !== 'authorized') {
+        throw new Error('Invalid CCOS content ad authorization: ads_authorized status requires authorized details');
+      }
+      if (effectiveAdAuthorizationCreatedAt && effectiveAdAuthorizationExpiresAt
+        && effectiveAdAuthorizationExpiresAt < effectiveAdAuthorizationCreatedAt) {
+        throw new Error('Invalid CCOS content ad authorization: expiry must be after creation');
+      }
       const metadataChanged = input.scheduledAt !== undefined
         || input.publishedAt !== undefined
         || input.publicationUrl !== undefined;
@@ -787,6 +895,10 @@ export class CCOSRepository {
       if (input.scheduledAt !== undefined) add('scheduled_at', input.scheduledAt);
       if (input.publishedAt !== undefined) add('published_at', input.publishedAt);
       if (input.publicationUrl !== undefined) add('publication_url', input.publicationUrl);
+      if (input.adAuthorizationStatus !== undefined) add('ad_authorization_status', input.adAuthorizationStatus);
+      if (input.adAuthorizationCode !== undefined) add('ad_authorization_code', input.adAuthorizationCode);
+      if (input.adAuthorizationCreatedAt !== undefined) add('ad_authorization_created_at', input.adAuthorizationCreatedAt);
+      if (input.adAuthorizationExpiresAt !== undefined) add('ad_authorization_expires_at', input.adAuthorizationExpiresAt);
       if (updates.length === 0) {
         await client.query('COMMIT');
         return current;
@@ -795,10 +907,24 @@ export class CCOSRepository {
         `UPDATE ccos_contents SET ${updates.join(', ')}, updated_at = NOW()
          WHERE workspace_id = $1 AND id = $2 RETURNING ${CONTENT_COLUMNS}`, values,
       );
-      if (statusChanged || metadataChanged) {
+      const sameDate = (left: Date | null, right: Date | null) => left?.getTime() === right?.getTime();
+      const authorizationStatusChanged = input.adAuthorizationStatus !== undefined
+        && input.adAuthorizationStatus !== current.adAuthorizationStatus;
+      const authorizationCodeChanged = input.adAuthorizationCode !== undefined
+        && input.adAuthorizationCode !== current.adAuthorizationCode;
+      const authorizationCreatedAtChanged = input.adAuthorizationCreatedAt !== undefined
+        && !sameDate(input.adAuthorizationCreatedAt, current.adAuthorizationCreatedAt);
+      const authorizationExpiresAtChanged = input.adAuthorizationExpiresAt !== undefined
+        && !sameDate(input.adAuthorizationExpiresAt, current.adAuthorizationExpiresAt);
+      const authorizationChanged = authorizationStatusChanged || authorizationCodeChanged
+        || authorizationCreatedAtChanged || authorizationExpiresAtChanged;
+      if (statusChanged || metadataChanged || authorizationChanged) {
+        const changeParts: string[] = [];
+        if (metadataChanged) changeParts.push('publication metadata updated');
+        if (authorizationChanged) changeParts.push('ad authorization details updated');
         const summary = statusChanged
-          ? `Content ${current.id} lifecycle changed: ${current.status} -> ${input.status}${metadataChanged ? '; publication metadata updated' : ''}`
-          : `Content ${current.id} publication metadata updated`;
+          ? `Content ${current.id} lifecycle changed: ${current.status} -> ${input.status}${changeParts.length ? `; ${changeParts.join('; ')}` : ''}`
+          : `Content ${current.id} ${changeParts.join('; ')}`;
         await client.query(
           `INSERT INTO ccos_interactions
            (workspace_id, partnership_id, direction, channel, summary, occurred_at, source)
@@ -809,6 +935,15 @@ export class CCOSRepository {
       if (statusChanged) {
         await this.syncGeneratedAction(client, workspaceId, { type: 'content', id: contentId },
           getNextActionRule({ type: 'content', status: input.status! }));
+      }
+      if (authorizationChanged) {
+        const affectedRules = authorizationStatusChanged
+          ? ['content.ad-auth.follow-up', 'content.ad-auth.share', 'content.ad-auth.expiry']
+          : [
+              ...(authorizationCodeChanged ? ['content.ad-auth.share'] : []),
+              ...(authorizationExpiresAtChanged ? ['content.ad-auth.expiry'] : []),
+            ];
+        await this.syncContentAuthorizationActions(client, workspaceId, mapContent(result.rows[0]), affectedRules);
       }
       await client.query('COMMIT');
       return result.rows[0] ? mapContent(result.rows[0]) : null;

@@ -95,6 +95,7 @@ if (!parsedUrl.pathname.slice(1).endsWith('_test')) {
 const packageRoot = resolve(process.cwd());
 const migrationsFolder = resolve(packageRoot, 'drizzle');
 const rollbackPaths = [
+  resolve(migrationsFolder, 'rollback/0006_nappy_raider.down.sql'),
   resolve(migrationsFolder, 'rollback/0005_free_human_robot.down.sql'),
   resolve(migrationsFolder, 'rollback/0004_brainy_black_bird.down.sql'),
   resolve(migrationsFolder, 'rollback/0003_silly_otto_octavius.down.sql'),
@@ -133,7 +134,7 @@ async function getMigrationCreatedAt(): Promise<number[]> {
   const journal = JSON.parse(await readFile(journalPath, 'utf8')) as {
     entries?: Array<{ tag?: string; when?: number }>;
   };
-  const tags = ['0002_worried_lyja', '0003_silly_otto_octavius', '0004_brainy_black_bird', '0005_free_human_robot'];
+  const tags = ['0002_worried_lyja', '0003_silly_otto_octavius', '0004_brainy_black_bird', '0005_free_human_robot', '0006_nappy_raider'];
   const entries = tags.map((tag) => journal.entries?.find((entry) => entry.tag === tag));
   if (entries.some((entry) => !entry || typeof entry.when !== 'number')) {
     throw new Error('Migration journal is missing a CCOS migration entry');
@@ -192,6 +193,26 @@ async function assertForwardSchema(): Promise<void> {
         AND column_name = 'template_version_id'`,
   );
   if (interactionColumns.rowCount !== 1) throw new Error('Missing interaction template_version_id column');
+
+  const authorizationColumns = await pool.query<{ column_name: string }>(
+    `SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'ccos_contents'
+        AND column_name = ANY($1::text[])`,
+    [['ad_authorization_status', 'ad_authorization_code', 'ad_authorization_created_at', 'ad_authorization_expires_at']],
+  );
+  if (authorizationColumns.rowCount !== 4) {
+    throw new Error(`Expected four per-content ad authorization columns, found ${authorizationColumns.rowCount ?? 0}`);
+  }
+  const authorizationChecks = await pool.query<{ conname: string }>(
+    `SELECT conname FROM pg_constraint
+      WHERE conrelid = 'public.ccos_contents'::regclass
+        AND conname = ANY($1::text[]) AND contype = 'c' AND convalidated = true`,
+    [['ccos_contents_ad_authorization_details', 'ccos_contents_ad_authorization_expiry',
+      'ccos_contents_ads_authorized_lifecycle']],
+  );
+  if (authorizationChecks.rowCount !== 3) {
+    throw new Error(`Expected three validated ad authorization checks, found ${authorizationChecks.rowCount ?? 0}`);
+  }
 
   const foreignKeys = await pool.query<{
     name: string;
@@ -283,8 +304,8 @@ async function main(): Promise<void> {
       'DELETE FROM drizzle.__drizzle_migrations WHERE created_at = ANY($1::bigint[]) RETURNING id',
       [migrationCreatedAt],
     );
-    if (deleted.rowCount !== 4) {
-      throw new Error(`Expected four CCOS migration journal rows, removed ${deleted.rowCount ?? 0}`);
+    if (deleted.rowCount !== 5) {
+      throw new Error(`Expected five CCOS migration journal rows, removed ${deleted.rowCount ?? 0}`);
     }
     await client.query('COMMIT');
   } catch (error) {

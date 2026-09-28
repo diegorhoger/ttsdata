@@ -43,6 +43,7 @@ const contentStatus = z.enum([
   'idea', 'planned', 'filming', 'editing', 'ready', 'scheduled', 'published',
   'ads_authorized', 'monitoring',
 ]);
+const adAuthorizationStatus = z.enum(['pending', 'authorized', 'unavailable']);
 const decimalValue = (maxIntegerDigits: number) => z.string().regex(
   new RegExp(`^\\d{1,${maxIntegerDigits}}(?:\\.\\d{1,6})?$`),
   `Must be a non-negative decimal with at most ${maxIntegerDigits} integer and 6 fractional digits`,
@@ -138,7 +139,28 @@ const updateContentSchema = z.object({
   scheduledAt: dateValue.nullable().optional(),
   publishedAt: dateValue.nullable().optional(),
   publicationUrl: z.string().url().max(2048).nullable().optional(),
-}).strict().refine((body) => Object.keys(body).length > 0, 'At least one field is required');
+  adAuthorizationStatus: adAuthorizationStatus.nullable().optional(),
+  adAuthorizationCode: z.string().trim().min(1).max(255).nullable().optional(),
+  adAuthorizationCreatedAt: dateValue.nullable().optional(),
+  adAuthorizationExpiresAt: dateValue.nullable().optional(),
+}).strict().refine((body) => Object.keys(body).length > 0, 'At least one field is required').superRefine((body, context) => {
+  if (body.adAuthorizationStatus && body.adAuthorizationStatus !== 'authorized'
+    && (body.adAuthorizationCode || body.adAuthorizationCreatedAt || body.adAuthorizationExpiresAt)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['adAuthorizationStatus'],
+      message: 'Pending or unavailable authorization cannot include code or timestamps',
+    });
+  }
+  if (body.status === 'ads_authorized' && body.adAuthorizationStatus
+    && body.adAuthorizationStatus !== 'authorized') {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['status'],
+      message: 'ads_authorized requires authorized ad-authorization details',
+    });
+  }
+});
 
 const actionTargetSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('store'), id: z.string().uuid() }).strict(),
