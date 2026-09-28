@@ -472,7 +472,7 @@ export const ccosContents = pgTable('ccos_contents', {
     ${t.adAuthorizationExpiresAt} IS NULL OR ${t.adAuthorizationExpiresAt} >= ${t.adAuthorizationCreatedAt}
   `),
   adsAuthorizedLifecycle: check('ccos_contents_ads_authorized_lifecycle', sql`
-    ${t.status} <> 'ads_authorized' OR ${t.adAuthorizationStatus} = 'authorized'
+    ${t.status} <> 'ads_authorized' OR ${t.adAuthorizationStatus} IS NOT DISTINCT FROM 'authorized'
   `),
 }));
 

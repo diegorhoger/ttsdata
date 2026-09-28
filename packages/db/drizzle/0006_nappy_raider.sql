@@ -19,5 +19,5 @@ ALTER TABLE "ccos_contents" ADD CONSTRAINT "ccos_contents_ad_authorization_expir
   "ad_authorization_expires_at" IS NULL OR "ad_authorization_expires_at" >= "ad_authorization_created_at"
 );--> statement-breakpoint
 ALTER TABLE "ccos_contents" ADD CONSTRAINT "ccos_contents_ads_authorized_lifecycle" CHECK (
-  "status" <> 'ads_authorized' OR "ad_authorization_status" = 'authorized'
+  "status" <> 'ads_authorized' OR "ad_authorization_status" IS NOT DISTINCT FROM 'authorized'
 );
