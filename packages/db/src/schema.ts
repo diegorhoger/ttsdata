@@ -66,6 +66,10 @@ export const ccosContentStatusEnum = pgEnum('ccos_content_status', [
   'ads_authorized', 'monitoring',
 ]);
 
+export const ccosAdAuthorizationStatusEnum = pgEnum('ccos_ad_authorization_status', [
+  'pending', 'authorized', 'unavailable',
+]);
+
 export const ccosInteractionDirectionEnum = pgEnum('ccos_interaction_direction', [
   'inbound', 'outbound', 'system',
 ]);
@@ -443,6 +447,10 @@ export const ccosContents = pgTable('ccos_contents', {
   scheduledAt: timestamp('scheduled_at', { withTimezone: true }),
   publishedAt: timestamp('published_at', { withTimezone: true }),
   publicationUrl: varchar('publication_url', { length: 2048 }),
+  adAuthorizationStatus: ccosAdAuthorizationStatusEnum('ad_authorization_status'),
+  adAuthorizationCode: varchar('ad_authorization_code', { length: 255 }),
+  adAuthorizationCreatedAt: timestamp('ad_authorization_created_at', { withTimezone: true }),
+  adAuthorizationExpiresAt: timestamp('ad_authorization_expires_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
@@ -453,6 +461,16 @@ export const ccosContents = pgTable('ccos_contents', {
     columns: [t.workspaceId, t.productId],
     foreignColumns: [ccosProducts.workspaceId, ccosProducts.id],
   }).onDelete('cascade'),
+  adAuthorizationDetails: check('ccos_contents_ad_authorization_details', sql`
+    (${t.adAuthorizationStatus} = 'authorized' AND ${t.adAuthorizationCode} IS NOT NULL AND ${t.adAuthorizationCreatedAt} IS NOT NULL)
+    OR (${t.adAuthorizationStatus} IN ('pending', 'unavailable') AND ${t.adAuthorizationCode} IS NULL
+        AND ${t.adAuthorizationCreatedAt} IS NULL AND ${t.adAuthorizationExpiresAt} IS NULL)
+    OR (${t.adAuthorizationStatus} IS NULL AND ${t.adAuthorizationCode} IS NULL
+        AND ${t.adAuthorizationCreatedAt} IS NULL AND ${t.adAuthorizationExpiresAt} IS NULL)
+  `),
+  adAuthorizationExpiry: check('ccos_contents_ad_authorization_expiry', sql`
+    ${t.adAuthorizationExpiresAt} IS NULL OR ${t.adAuthorizationExpiresAt} >= ${t.adAuthorizationCreatedAt}
+  `),
 }));
 
 export const ccosInteractions = pgTable('ccos_interactions', {

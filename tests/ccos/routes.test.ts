@@ -75,6 +75,10 @@ const content = {
   scheduledAt: null,
   publishedAt: null,
   publicationUrl: null,
+  adAuthorizationStatus: null,
+  adAuthorizationCode: null,
+  adAuthorizationCreatedAt: null,
+  adAuthorizationExpiresAt: null,
   createdAt: NOW,
   updatedAt: NOW,
 };
@@ -578,6 +582,45 @@ describe('CCOS store and partnership routes', () => {
       publishedAt: null,
       publicationUrl: null,
     });
+  });
+
+  it('accepts explicit manual ad-authorization fields and rejects unknown or malformed values', async () => {
+    const repository = createRepository();
+    const app = await buildApp(repository);
+    apps.push(app);
+
+    const response = await app.inject({
+      method: 'PATCH', url: `/api/ccos/contents/${CONTENT_ID}`,
+      payload: {
+        adAuthorizationStatus: 'authorized',
+        adAuthorizationCode: 'AUTH-123',
+        adAuthorizationCreatedAt: '2026-09-28T12:00:00.000Z',
+        adAuthorizationExpiresAt: '2026-12-28T12:00:00.000Z',
+      },
+    });
+    const inconsistent = await app.inject({
+      method: 'PATCH', url: `/api/ccos/contents/${CONTENT_ID}`,
+      payload: { adAuthorizationStatus: 'pending', adAuthorizationCode: 'STALE-CODE' },
+    });
+    const invalidStatus = await app.inject({
+      method: 'PATCH', url: `/api/ccos/contents/${CONTENT_ID}`,
+      payload: { adAuthorizationStatus: 'guessed' },
+    });
+    const invalidCode = await app.inject({
+      method: 'PATCH', url: `/api/ccos/contents/${CONTENT_ID}`,
+      payload: { adAuthorizationCode: '' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(repository.updateContent).toHaveBeenCalledWith(WORKSPACE_ID, CONTENT_ID, {
+      adAuthorizationStatus: 'authorized',
+      adAuthorizationCode: 'AUTH-123',
+      adAuthorizationCreatedAt: new Date('2026-09-28T12:00:00.000Z'),
+      adAuthorizationExpiresAt: new Date('2026-12-28T12:00:00.000Z'),
+    });
+    expect(invalidStatus.statusCode).toBe(400);
+    expect(invalidCode.statusCode).toBe(400);
+    expect(inconsistent.statusCode).toBe(400);
   });
 
   it('lists the authenticated workspace attention inbox', async () => {

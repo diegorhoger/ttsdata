@@ -351,6 +351,112 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
       [workspaceA, partnership.id],
     );
     expect(auditedEdit.rows[0].summary).toBe(`Content ${primary.id} publication metadata updated`);
+
+    await repository.updateContent(workspaceA, variant.id, { status: 'planned' });
+    await repository.updateContent(workspaceA, variant.id, { status: 'filming' });
+    await repository.updateContent(workspaceA, variant.id, { status: 'editing' });
+    await repository.updateContent(workspaceA, variant.id, { status: 'ready' });
+    const variantPublishedAt = new Date('2026-10-02T14:00:00.000Z');
+    const variantPublished = await repository.updateContent(workspaceA, variant.id, {
+      status: 'published',
+      publishedAt: variantPublishedAt,
+      publicationUrl: 'https://www.tiktok.com/@creator/video/789',
+    });
+    expect(variantPublished).toMatchObject({
+      publishedAt: variantPublishedAt,
+      publicationUrl: 'https://www.tiktok.com/@creator/video/789',
+    });
+    await expect(repository.getContent(workspaceA, primary.id)).resolves.toMatchObject({
+      publishedAt: new Date('2026-10-01T13:00:00.000Z'),
+      publicationUrl: 'https://www.tiktok.com/@creator/video/456',
+    });
+  });
+
+  it('tracks manually entered ad authorization and expiry independently for each creative', async () => {
+    const store = await repository.createStore({ workspaceId: workspaceA, name: 'Ad Authorization Store' });
+    const partnership = await repository.createPartnership({
+      workspaceId: workspaceA, storeId: store.id, type: 'paid_campaign',
+    });
+    const product = await repository.createProduct({
+      workspaceId: workspaceA, partnershipId: partnership.id, name: 'Authorization Product',
+    });
+    const first = await repository.createContent({ workspaceId: workspaceA, productId: product.id, platform: 'tiktok' });
+    const second = await repository.createContent({ workspaceId: workspaceA, productId: product.id, platform: 'tiktok' });
+
+    expect(first).toMatchObject({
+      adAuthorizationStatus: null, adAuthorizationCode: null,
+      adAuthorizationCreatedAt: null, adAuthorizationExpiresAt: null,
+    });
+    await repository.updateContent(workspaceA, first.id, { adAuthorizationStatus: 'pending' });
+    await expect(repository.getContent(workspaceA, second.id)).resolves.toMatchObject({
+      adAuthorizationStatus: null, adAuthorizationCode: null,
+    });
+    const pendingActions = await pool.query<{ rule_key: string; status: string; content_id: string }>(
+      `SELECT rule_key, status, content_id FROM ccos_next_actions
+        WHERE workspace_id = $1 AND content_id = $2 AND rule_key LIKE 'content.ad-auth.%'`,
+      [workspaceA, first.id],
+    );
+    expect(pendingActions.rows).toContainEqual({
+      rule_key: 'content.ad-auth.follow-up', status: 'waiting', content_id: first.id,
+    });
+    await repository.updateContent(workspaceA, first.id, { status: 'planned' });
+    const pendingAfterLifecycleChange = await pool.query<{ status: string }>(
+      `SELECT status FROM ccos_next_actions
+        WHERE workspace_id = $1 AND content_id = $2 AND rule_key = 'content.ad-auth.follow-up'
+          AND status IN ('open', 'in_progress', 'waiting')`,
+      [workspaceA, first.id],
+    );
+    expect(pendingAfterLifecycleChange.rows).toEqual([{ status: 'waiting' }]);
+
+    const createdAt = new Date('2026-09-28T12:00:00.000Z');
+    const expiresAt = new Date('2026-12-28T12:00:00.000Z');
+    const authorized = await repository.updateContent(workspaceA, first.id, {
+      adAuthorizationStatus: 'authorized',
+      adAuthorizationCode: 'MANUAL-CODE-1',
+      adAuthorizationCreatedAt: createdAt,
+      adAuthorizationExpiresAt: expiresAt,
+    });
+    expect(authorized).toMatchObject({
+      adAuthorizationStatus: 'authorized', adAuthorizationCode: 'MANUAL-CODE-1',
+      adAuthorizationCreatedAt: createdAt, adAuthorizationExpiresAt: expiresAt,
+    });
+    const authorizationActions = await pool.query<{ rule_key: string; due_at: Date | null; status: string }>(
+      `SELECT rule_key, due_at, status FROM ccos_next_actions
+        WHERE workspace_id = $1 AND content_id = $2 AND rule_key LIKE 'content.ad-auth.%'
+          AND status IN ('open', 'in_progress', 'waiting') ORDER BY rule_key`,
+      [workspaceA, first.id],
+    );
+    expect(authorizationActions.rows).toEqual([
+      { rule_key: 'content.ad-auth.expiry', due_at: expiresAt, status: 'open' },
+      { rule_key: 'content.ad-auth.share', due_at: null, status: 'open' },
+    ]);
+
+    await expect(repository.updateContent(workspaceA, first.id, {
+      adAuthorizationExpiresAt: new Date('2026-08-01T00:00:00.000Z'),
+    })).rejects.toThrow('Invalid CCOS content ad authorization: expiry must be after creation');
+    await repository.updateContent(workspaceA, first.id, {
+      adAuthorizationStatus: 'unavailable',
+      adAuthorizationCode: null,
+      adAuthorizationCreatedAt: null,
+      adAuthorizationExpiresAt: null,
+    });
+    await expect(repository.getContent(workspaceA, first.id)).resolves.toMatchObject({
+      adAuthorizationStatus: 'unavailable', adAuthorizationCode: null,
+      adAuthorizationCreatedAt: null, adAuthorizationExpiresAt: null,
+    });
+    const activeActions = await pool.query<{ count: string }>(
+      `SELECT COUNT(*) FROM ccos_next_actions
+        WHERE workspace_id = $1 AND content_id = $2 AND rule_key LIKE 'content.ad-auth.%'
+          AND status IN ('open', 'in_progress', 'waiting')`,
+      [workspaceA, first.id],
+    );
+    expect(activeActions.rows[0].count).toBe('0');
+
+    await expect(pool.query(
+      `UPDATE ccos_contents SET ad_authorization_status = 'pending', ad_authorization_code = 'STALE'
+        WHERE workspace_id = $1 AND id = $2`,
+      [workspaceA, second.id],
+    )).rejects.toMatchObject({ code: '23514' });
   });
 
   it('serializes mutually exclusive content transitions', async () => {
