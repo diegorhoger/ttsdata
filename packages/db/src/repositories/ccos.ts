@@ -750,6 +750,8 @@ export class CCOSRepository {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      // Serialize queue membership transitions without blocking FK KEY SHARE locks.
+      await client.query('SELECT id FROM workspaces WHERE id = $1 FOR NO KEY UPDATE', [workspaceId]);
       const selected = await client.query<ProductRow>(
         `SELECT ${PRODUCT_COLUMNS} FROM ccos_products
          WHERE workspace_id = $1 AND id = $2 FOR UPDATE`, [workspaceId, productId],

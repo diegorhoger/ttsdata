@@ -18,6 +18,8 @@ const CCOS_TABLES = [
   'ccos_next_actions',
   'ccos_metric_snapshots',
   'ccos_performance_snapshots',
+  'ccos_production_queue_state',
+  'ccos_production_queue_audit',
 ] as const;
 type ForeignKeyExpectation = {
   name: string;
@@ -53,6 +55,9 @@ const tenantForeignKey = (
 });
 
 const CCOS_FOREIGN_KEYS: ForeignKeyExpectation[] = [
+  workspaceForeignKey('ccos_production_queue_state'),
+  workspaceForeignKey('ccos_production_queue_audit'),
+  tenantForeignKey('ccos_queue_audit_workspace_actor_fk', 'ccos_production_queue_audit', 'actor_user_id', 'users', 'r'),
   workspaceForeignKey('ccos_contents'),
   tenantForeignKey('ccos_contents_workspace_product_fk', 'ccos_contents', 'product_id', 'ccos_products'),
   workspaceForeignKey('ccos_interactions'),
@@ -98,6 +103,7 @@ if (!parsedUrl.pathname.slice(1).endsWith('_test')) {
 const packageRoot = resolve(process.cwd());
 const migrationsFolder = resolve(packageRoot, 'drizzle');
 const rollbackPaths = [
+  resolve(migrationsFolder, 'rollback/0008_red_the_santerians.down.sql'),
   resolve(migrationsFolder, 'rollback/0007_ccos_performance_snapshots.down.sql'),
   resolve(migrationsFolder, 'rollback/0006_nappy_raider.down.sql'),
   resolve(migrationsFolder, 'rollback/0005_free_human_robot.down.sql'),
@@ -118,6 +124,7 @@ async function runConstraintTests(): Promise<void> {
       '--config',
       'vitest.integration.config.ts',
       'packages/db/tests/ccos/integration.test.ts',
+      'packages/db/tests/production-queue/integration.test.ts',
     ], {
       cwd: resolve(packageRoot, '../..'),
       env: { ...process.env, TEST_DATABASE_URL },
@@ -138,7 +145,7 @@ async function getMigrationCreatedAt(): Promise<number[]> {
   const journal = JSON.parse(await readFile(journalPath, 'utf8')) as {
     entries?: Array<{ tag?: string; when?: number }>;
   };
-  const tags = ['0002_worried_lyja', '0003_silly_otto_octavius', '0004_brainy_black_bird', '0005_free_human_robot', '0006_nappy_raider', '0007_ccos_performance_snapshots'];
+  const tags = ['0002_worried_lyja', '0003_silly_otto_octavius', '0004_brainy_black_bird', '0005_free_human_robot', '0006_nappy_raider', '0007_ccos_performance_snapshots', '0008_red_the_santerians'];
   const entries = tags.map((tag) => journal.entries?.find((entry) => entry.tag === tag));
   if (entries.some((entry) => !entry || typeof entry.when !== 'number')) {
     throw new Error('Migration journal is missing a CCOS migration entry');
@@ -147,6 +154,9 @@ async function getMigrationCreatedAt(): Promise<number[]> {
 }
 
 async function assertForwardSchema(): Promise<void> {
+  const queueChecks = await pool.query(`SELECT conname FROM pg_constraint WHERE conname = ANY($1::text[])`,
+    [['ccos_queue_state_revision_check', 'ccos_queue_state_order_check', 'ccos_queue_audit_shape_check']]);
+  if (queueChecks.rowCount !== 3) throw new Error('Production queue CHECK constraints are missing');
   const tables = await pool.query<{ table_name: string }>(
     `SELECT table_name
        FROM information_schema.tables
@@ -336,8 +346,8 @@ async function main(): Promise<void> {
       'DELETE FROM drizzle.__drizzle_migrations WHERE created_at = ANY($1::bigint[]) RETURNING id',
       [migrationCreatedAt],
     );
-    if (deleted.rowCount !== 6) {
-      throw new Error(`Expected six CCOS migration journal rows, removed ${deleted.rowCount ?? 0}`);
+    if (deleted.rowCount !== rollbackPaths.length) {
+      throw new Error(`Expected ${rollbackPaths.length} CCOS migration journal rows, removed ${deleted.rowCount ?? 0}`);
     }
     await client.query('COMMIT');
   } catch (error) {
