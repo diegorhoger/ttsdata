@@ -30,7 +30,8 @@ export function opportunityEvidenceTextLength(value: unknown): number {
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) return Infinity;
     const rendered = JSON.stringify(value);
-    return /e/i.test(rendered) ? 325 : rendered.length;
+    // PostgreSQL numeric text expands the smallest negative subnormal to 327 chars.
+    return /e/i.test(rendered) ? 327 : rendered.length;
   }
   if (Array.isArray(value)) return 2 + value.reduce((length, item, index) => length
     + (index ? 2 : 0) + opportunityEvidenceTextLength(item === undefined ? null : item), 0);
