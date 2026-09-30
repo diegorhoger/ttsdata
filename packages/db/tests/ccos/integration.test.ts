@@ -759,6 +759,13 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
     expect(repeated.views).toBe(135);
     expect(repeated.clicks).toBeNull();
     expect(repeated.classifications.clicks).toBe('unavailable');
+    await expect(pool.query(
+      `INSERT INTO ccos_performance_snapshots
+        (workspace_id, content_id, observed_at, gmv, classifications, provenance)
+       SELECT workspace_id, content_id, observed_at + INTERVAL '1 second', gmv, classifications, provenance
+         FROM ccos_performance_snapshots WHERE id = $1`,
+      [repeated.id],
+    )).rejects.toMatchObject({ code: '23514' });
     expect(await repository.listPerformanceSnapshots(workspaceB, { productId: product.id })).toEqual([]);
     expect(await repository.listPerformanceSnapshots(workspaceA, { productId: product.id, from: currentAt, to: currentAt }))
       .toHaveLength(1);

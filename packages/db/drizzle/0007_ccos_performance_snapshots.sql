@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS "ccos_performance_snapshots" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "ccos_performance_snapshots_non_negative_counts" CHECK (("views" IS NULL OR "views" >= 0) AND ("clicks" IS NULL OR "clicks" >= 0) AND ("orders" IS NULL OR "orders" >= 0)),
 	CONSTRAINT "ccos_performance_snapshots_non_negative_amounts" CHECK (("gmv" IS NULL OR "gmv" >= 0) AND ("commission" IS NULL OR "commission" >= 0) AND ("conversion" IS NULL OR ("conversion" >= 0 AND "conversion" <= 1))),
-	CONSTRAINT "ccos_performance_snapshots_currency_required" CHECK ((("gmv" IS NULL AND "commission" IS NULL) OR "currency" ~ '^[A-Z]{3}$')),
+	CONSTRAINT "ccos_performance_snapshots_currency_required" CHECK ((("gmv" IS NULL AND "commission" IS NULL) OR ("currency" IS NOT NULL AND "currency" ~ '^[A-Z]{3}$'))),
 	CONSTRAINT "ccos_performance_snapshots_classification_provenance_shape" CHECK (COALESCE((
 		jsonb_typeof("classifications") = 'object'
 		AND "classifications" ?& ARRAY['views','clicks','orders','gmv','commission','conversion']

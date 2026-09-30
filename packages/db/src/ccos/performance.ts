@@ -70,7 +70,9 @@ export function comparePerformanceSnapshots(
       const delta = currentValue === null || baselineValue === null
         ? null
         : metric === 'gmv' || metric === 'commission'
-          ? decimalDelta(String(currentValue), String(baselineValue), 6)
+          ? current.currency !== baseline?.currency || current.currency === null
+            ? null
+            : decimalDelta(String(currentValue), String(baselineValue), 6)
           : metric === 'conversion'
             ? decimalDelta(String(currentValue), String(baselineValue), 8)
             : Number(currentValue) - Number(baselineValue);
