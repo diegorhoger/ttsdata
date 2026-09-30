@@ -580,6 +580,7 @@ export const ccosNextActions = pgTable('ccos_next_actions', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   workspaceStatusDueIdx: index('ccos_next_actions_workspace_status_due_idx').on(t.workspaceId, t.status, t.dueAt),
+  workspaceIdUnique: uniqueIndex('ccos_next_actions_workspace_id_idx').on(t.workspaceId, t.id),
   activeGeneratedDedupe: uniqueIndex('ccos_next_actions_active_generated_dedupe_idx')
     .on(t.workspaceId, t.dedupeKey)
     .where(sql`${t.generatedAutomatically} = true AND ${t.status} IN ('open', 'in_progress', 'waiting')`),
@@ -654,8 +655,42 @@ export const ccosMetricSnapshots = pgTable('ccos_metric_snapshots', {
   }).onDelete('cascade'),
 }));
 
-// Immutable-at-a-timestamp performance observations for a published content item.
-// A repeated write to the same content/time key is an upsert, not another snapshot.
+// Human-assessed relationship potential, independent of delivery/publication lifecycle.
+export const ccosOpportunityStateEnum = pgEnum('ccos_opportunity_state', ['UNASSESSED', 'TESTING', 'LOW_POTENTIAL', 'PROMISING', 'WINNER', 'SCALE', 'PAUSED']);
+export const ccosOpportunityStates = pgTable('ccos_opportunity_states', {
+  partnershipId: uuid('partnership_id').primaryKey(),
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  state: ccosOpportunityStateEnum('state').notNull().default('UNASSESSED'),
+  revision: integer('revision').notNull().default(0),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  partnershipFk: foreignKey({ name: 'ccos_opportunity_states_workspace_partnership_fk', columns: [t.workspaceId, t.partnershipId], foreignColumns: [ccosPartnerships.workspaceId, ccosPartnerships.id] }).onDelete('cascade'),
+  revisionCheck: check('ccos_opportunity_states_revision_check', sql`${t.revision} >= 0`),
+}));
+
+export const ccosOpportunityHistory = pgTable('ccos_opportunity_history', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  partnershipId: uuid('partnership_id').notNull(),
+  actorUserId: uuid('actor_user_id').notNull(),
+  revision: integer('revision').notNull(),
+  previousState: ccosOpportunityStateEnum('previous_state').notNull(),
+  newState: ccosOpportunityStateEnum('new_state').notNull(),
+  actionKind: varchar('action_kind', { length: 32 }),
+  actionId: uuid('action_id'),
+  reason: text('reason').notNull(),
+  evidence: jsonb('evidence').notNull(),
+  policyVersion: varchar('policy_version', { length: 64 }).notNull().default('manual-v1'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  revisionUnique: uniqueIndex('ccos_opportunity_history_revision_idx').on(t.workspaceId, t.partnershipId, t.revision),
+  partnershipFk: foreignKey({ name: 'ccos_opportunity_history_workspace_partnership_fk', columns: [t.workspaceId, t.partnershipId], foreignColumns: [ccosPartnerships.workspaceId, ccosPartnerships.id] }).onDelete('cascade'),
+  actorFk: foreignKey({ name: 'ccos_opportunity_history_workspace_actor_fk', columns: [t.workspaceId, t.actorUserId], foreignColumns: [users.workspaceId, users.id] }).onDelete('no action'),
+  // Restrict deleting an action once it has become an audited opportunity decision.
+  actionFk: foreignKey({ name: 'ccos_opportunity_history_workspace_action_fk', columns: [t.workspaceId, t.actionId], foreignColumns: [ccosNextActions.workspaceId, ccosNextActions.id] }).onDelete('no action'),
+  shapeCheck: check('ccos_opportunity_history_shape_check', sql`${t.revision} > 0 AND length(trim(${t.reason})) BETWEEN 1 AND 2000 AND jsonb_typeof(${t.evidence}) = 'object' AND ${t.evidence} <> '{}'::jsonb AND length(${t.evidence}::text) <= 20000 AND ${t.policyVersion} = 'manual-v1' AND ((${t.actionKind} IS NULL AND ${t.actionId} IS NULL AND ${t.previousState} <> ${t.newState}) OR (${t.actionKind} IS NOT NULL AND ${t.actionKind} IN ('follow_up','replenishment','additional_sku','new_creative','expansion') AND ${t.actionId} IS NOT NULL AND ${t.previousState} = ${t.newState}))`),
+}));
+
 export const ccosProductionQueueState = pgTable('ccos_production_queue_state', {
   workspaceId: uuid('workspace_id').primaryKey().references(() => workspaces.id, { onDelete: 'cascade' }),
   revision: integer('revision').notNull().default(0),
@@ -681,6 +716,8 @@ export const ccosProductionQueueAudit = pgTable('ccos_production_queue_audit', {
   shapeCheck: check('ccos_queue_audit_shape_check', sql`${t.revision} > 0 AND length(trim(${t.reason})) > 0 AND jsonb_typeof(${t.previousOrder}) = 'array' AND jsonb_typeof(${t.newOrder}) = 'array'`),
 }));
 
+// Immutable-at-a-timestamp performance observations for a published content item.
+// A repeated write to the same content/time key is an upsert, not another snapshot.
 export const ccosPerformanceSnapshots = pgTable('ccos_performance_snapshots', {
   id: uuid('id').primaryKey().defaultRandom(),
   workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),

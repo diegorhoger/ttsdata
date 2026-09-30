@@ -6,6 +6,7 @@ export {
   ccosStores, ccosPartnerships, ccosProducts, ccosContents,
   ccosInteractions, ccosNextActions, ccosMetricSnapshots,
   ccosPerformanceSnapshots,
+  ccosOpportunityStates, ccosOpportunityHistory,
   ccosTemplateVersions, ccosTemplateUsage, ccosInteractionSources,
 } from './schema';
 
@@ -44,3 +45,5 @@ export * from './ccos/next-actions';
 export * from './ccos/performance';
 export * from './ccos/production-queue';
 export * from './repositories/production-queue';
+export * from './ccos/opportunities';
+export * from './repositories/opportunities';
