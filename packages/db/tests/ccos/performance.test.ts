@@ -31,14 +31,28 @@ describe('CCOS performance comparisons', () => {
   it('subtracts monetary and ratio values exactly at their stored precision', () => {
     const baseline = {
       ...snapshot('baseline', '2026-09-29T12:00:00.000Z', null),
-      gmv: '0.100000', conversion: '0.10000000',
+      gmv: '0.100000', conversion: '0.10000000', currency: 'BRL',
     };
     const current = {
       ...snapshot('current', '2026-09-30T12:00:00.000Z', null),
-      gmv: '0.300000', conversion: '0.30000000',
+      gmv: '0.300000', conversion: '0.30000000', currency: 'BRL',
     };
     const comparison = comparePerformanceSnapshots([baseline, current], current)['24h'];
     expect(comparison.values.gmv.delta).toBe('0.2');
     expect(comparison.values.conversion.delta).toBe('0.2');
+  });
+
+  it('does not subtract monetary values across currencies', () => {
+    const baseline = {
+      ...snapshot('baseline', '2026-09-29T12:00:00.000Z', null),
+      gmv: '100.000000', commission: '10.000000', currency: 'USD',
+    };
+    const current = {
+      ...snapshot('current', '2026-09-30T12:00:00.000Z', null),
+      gmv: '100.000000', commission: '10.000000', currency: 'BRL',
+    };
+    const comparison = comparePerformanceSnapshots([baseline, current], current)['24h'];
+    expect(comparison.values.gmv.delta).toBeNull();
+    expect(comparison.values.commission.delta).toBeNull();
   });
 });

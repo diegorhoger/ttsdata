@@ -689,7 +689,8 @@ export const ccosPerformanceSnapshots = pgTable('ccos_performance_snapshots', {
     AND (${t.conversion} IS NULL OR (${t.conversion} >= 0 AND ${t.conversion} <= 1))
   `),
   currencyRequired: check('ccos_performance_snapshots_currency_required', sql`
-    ((${t.gmv} IS NULL AND ${t.commission} IS NULL) OR ${t.currency} ~ '^[A-Z]{3}$')
+    ((${t.gmv} IS NULL AND ${t.commission} IS NULL)
+      OR (${t.currency} IS NOT NULL AND ${t.currency} ~ '^[A-Z]{3}$'))
   `),
   classificationProvenanceShape: check('ccos_performance_snapshots_classification_provenance_shape', sql`
     COALESCE((jsonb_typeof(${t.classifications}) = 'object'
