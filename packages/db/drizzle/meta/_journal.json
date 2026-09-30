@@ -50,6 +50,13 @@
       "when": 1790625709148,
       "tag": "0006_nappy_raider",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790800000000,
+      "tag": "0007_ccos_performance_snapshots",
+      "breakpoints": true
     }
   ]
 }

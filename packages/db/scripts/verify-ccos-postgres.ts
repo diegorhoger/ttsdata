@@ -17,6 +17,7 @@ const CCOS_TABLES = [
   'ccos_template_usage',
   'ccos_next_actions',
   'ccos_metric_snapshots',
+  'ccos_performance_snapshots',
 ] as const;
 type ForeignKeyExpectation = {
   name: string;
@@ -69,6 +70,8 @@ const CCOS_FOREIGN_KEYS: ForeignKeyExpectation[] = [
   tenantForeignKey('ccos_metric_snapshots_workspace_product_fk', 'ccos_metric_snapshots', 'product_id', 'ccos_products'),
   tenantForeignKey('ccos_metric_snapshots_workspace_content_fk', 'ccos_metric_snapshots', 'content_id', 'ccos_contents'),
   tenantForeignKey('ccos_metric_snapshots_workspace_interaction_fk', 'ccos_metric_snapshots', 'interaction_id', 'ccos_interactions'),
+  workspaceForeignKey('ccos_performance_snapshots'),
+  tenantForeignKey('ccos_performance_snapshots_workspace_content_fk', 'ccos_performance_snapshots', 'content_id', 'ccos_contents'),
   workspaceForeignKey('ccos_next_actions'),
   tenantForeignKey('ccos_next_actions_workspace_owner_fk', 'ccos_next_actions', 'owner_user_id', 'users', 'r'),
   tenantForeignKey('ccos_next_actions_workspace_store_fk', 'ccos_next_actions', 'store_id', 'ccos_stores'),
@@ -95,6 +98,7 @@ if (!parsedUrl.pathname.slice(1).endsWith('_test')) {
 const packageRoot = resolve(process.cwd());
 const migrationsFolder = resolve(packageRoot, 'drizzle');
 const rollbackPaths = [
+  resolve(migrationsFolder, 'rollback/0007_ccos_performance_snapshots.down.sql'),
   resolve(migrationsFolder, 'rollback/0006_nappy_raider.down.sql'),
   resolve(migrationsFolder, 'rollback/0005_free_human_robot.down.sql'),
   resolve(migrationsFolder, 'rollback/0004_brainy_black_bird.down.sql'),
@@ -134,7 +138,7 @@ async function getMigrationCreatedAt(): Promise<number[]> {
   const journal = JSON.parse(await readFile(journalPath, 'utf8')) as {
     entries?: Array<{ tag?: string; when?: number }>;
   };
-  const tags = ['0002_worried_lyja', '0003_silly_otto_octavius', '0004_brainy_black_bird', '0005_free_human_robot', '0006_nappy_raider'];
+  const tags = ['0002_worried_lyja', '0003_silly_otto_octavius', '0004_brainy_black_bird', '0005_free_human_robot', '0006_nappy_raider', '0007_ccos_performance_snapshots'];
   const entries = tags.map((tag) => journal.entries?.find((entry) => entry.tag === tag));
   if (entries.some((entry) => !entry || typeof entry.when !== 'number')) {
     throw new Error('Migration journal is missing a CCOS migration entry');
@@ -175,6 +179,34 @@ async function assertForwardSchema(): Promise<void> {
   );
   if (productColumns.rowCount !== 5) {
     throw new Error(`Expected five product commercial/logistics columns, found ${productColumns.rowCount ?? 0}`);
+  }
+
+  const performanceColumns = await pool.query<{ column_name: string }>(
+    `SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'ccos_performance_snapshots'
+        AND column_name = ANY($1::text[])`,
+    [['content_id', 'observed_at', 'views', 'clicks', 'orders', 'gmv', 'commission', 'conversion',
+      'currency', 'classifications', 'provenance']],
+  );
+  if (performanceColumns.rowCount !== 11) {
+    throw new Error(`Expected eleven performance snapshot columns, found ${performanceColumns.rowCount ?? 0}`);
+  }
+  const performanceChecks = await pool.query<{ conname: string }>(
+    `SELECT conname FROM pg_constraint WHERE conrelid = 'public.ccos_performance_snapshots'::regclass
+      AND conname = ANY($1::text[]) AND contype = 'c' AND convalidated = true`,
+    [['ccos_performance_snapshots_non_negative_counts', 'ccos_performance_snapshots_non_negative_amounts',
+      'ccos_performance_snapshots_currency_required', 'ccos_performance_snapshots_classification_provenance_shape']],
+  );
+  if (performanceChecks.rowCount !== 4) throw new Error('Missing validated performance snapshot value/provenance constraints');
+  const performanceIdempotency = await pool.query<{ indisunique: boolean }>(
+    `SELECT i.indisunique FROM pg_index i
+      JOIN pg_class idx ON idx.oid = i.indexrelid
+      JOIN pg_class tbl ON tbl.oid = i.indrelid
+     WHERE idx.relname = 'ccos_performance_snapshots_content_time_idx'
+       AND tbl.relname = 'ccos_performance_snapshots'`,
+  );
+  if (performanceIdempotency.rowCount !== 1 || !performanceIdempotency.rows[0].indisunique) {
+    throw new Error('Performance snapshot content/time key is not unique');
   }
 
   const actionColumns = await pool.query<{ column_name: string }>(
@@ -304,8 +336,8 @@ async function main(): Promise<void> {
       'DELETE FROM drizzle.__drizzle_migrations WHERE created_at = ANY($1::bigint[]) RETURNING id',
       [migrationCreatedAt],
     );
-    if (deleted.rowCount !== 5) {
-      throw new Error(`Expected five CCOS migration journal rows, removed ${deleted.rowCount ?? 0}`);
+    if (deleted.rowCount !== 6) {
+      throw new Error(`Expected six CCOS migration journal rows, removed ${deleted.rowCount ?? 0}`);
     }
     await client.query('COMMIT');
   } catch (error) {

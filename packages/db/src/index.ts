@@ -5,6 +5,7 @@ export {
   trendSignals, watchlists, watchlistItems, alertRules, alertHistory,
   ccosStores, ccosPartnerships, ccosProducts, ccosContents,
   ccosInteractions, ccosNextActions, ccosMetricSnapshots,
+  ccosPerformanceSnapshots,
   ccosTemplateVersions, ccosTemplateUsage, ccosInteractionSources,
 } from './schema';
 
@@ -36,6 +37,8 @@ export {
   type CCOInteractionSourceRecord,
   type CreateCCOSInteractionInput,
   type CCOSInteractionRecord,
+  type CreateCCOSPerformanceSnapshotInput,
 } from './repositories/ccos';
 export * from './ccos/lifecycle';
 export * from './ccos/next-actions';
+export * from './ccos/performance';

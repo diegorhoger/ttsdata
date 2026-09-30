@@ -142,6 +142,16 @@ function createRepository() {
     listContents: vi.fn().mockResolvedValue([content]),
     getContent: vi.fn().mockResolvedValue(content),
     updateContent: vi.fn().mockResolvedValue(content),
+    createPerformanceSnapshot: vi.fn().mockResolvedValue({
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', workspaceId: WORKSPACE_ID,
+      contentId: CONTENT_ID, productId: PRODUCT_ID, observedAt: NOW,
+      views: 10, clicks: null, orders: null, gmv: null, commission: null, conversion: null, currency: null,
+      classifications: { views: 'observed', clicks: 'unavailable', orders: 'unavailable',
+        gmv: 'unavailable', commission: 'unavailable', conversion: 'unavailable' },
+      provenance: { schemaVersion: 1, source: 'manual', metrics: {} }, createdAt: NOW,
+    }),
+    listPerformanceSnapshots: vi.fn().mockResolvedValue([]),
+    getPerformanceComparisons: vi.fn().mockResolvedValue(null),
     createNextAction: vi.fn().mockResolvedValue(nextAction),
     listAttentionInbox: vi.fn().mockResolvedValue([nextAction]),
     getNextAction: vi.fn().mockResolvedValue(nextAction),
@@ -268,6 +278,41 @@ describe('CCOS store and partnership routes', () => {
     expect(partnershipResponse.statusCode).toBe(400);
     expect(repository.getStore).not.toHaveBeenCalled();
     expect(repository.updatePartnership).not.toHaveBeenCalled();
+  });
+
+  it('records tenant-scoped performance snapshots and rejects fabricated zeros/classifications', async () => {
+    const repository = createRepository();
+    const app = await buildApp(repository);
+    apps.push(app);
+    const response = await app.inject({
+      method: 'POST', url: `/api/ccos/contents/${CONTENT_ID}/performance`,
+      payload: { observedAt: NOW.toISOString(), source: 'manual', metrics: { views: { value: 0, classification: 'observed' } } },
+    });
+    expect(response.statusCode).toBe(201);
+    expect(repository.createPerformanceSnapshot).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: WORKSPACE_ID, contentId: CONTENT_ID, source: 'manual',
+    }));
+    const invalid = await app.inject({
+      method: 'POST', url: `/api/ccos/contents/${CONTENT_ID}/performance`,
+      payload: { observedAt: NOW.toISOString(), source: 'manual', metrics: { views: { value: null, classification: 'observed' } } },
+    });
+    expect(invalid.statusCode).toBe(400);
+    expect(repository.createPerformanceSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it('queries product performance history with an inclusive time window in the authenticated workspace', async () => {
+    const repository = createRepository();
+    const app = await buildApp(repository);
+    apps.push(app);
+    const from = '2026-09-01T00:00:00.000Z';
+    const to = '2026-09-30T00:00:00.000Z';
+    const response = await app.inject({
+      method: 'GET', url: `/api/ccos/products/${PRODUCT_ID}/performance?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    });
+    expect(response.statusCode).toBe(200);
+    expect(repository.listPerformanceSnapshots).toHaveBeenCalledWith(WORKSPACE_ID, {
+      productId: PRODUCT_ID, from: new Date(from), to: new Date(to),
+    });
   });
 
   it('creates a partnership only after a tenant-scoped store lookup', async () => {

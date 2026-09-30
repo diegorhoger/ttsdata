@@ -653,6 +653,94 @@ export const ccosMetricSnapshots = pgTable('ccos_metric_snapshots', {
   }).onDelete('cascade'),
 }));
 
+// Immutable-at-a-timestamp performance observations for a published content item.
+// A repeated write to the same content/time key is an upsert, not another snapshot.
+export const ccosPerformanceSnapshots = pgTable('ccos_performance_snapshots', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  contentId: uuid('content_id').notNull(),
+  observedAt: timestamp('observed_at', { withTimezone: true }).notNull(),
+  views: bigint('views', { mode: 'number' }),
+  clicks: bigint('clicks', { mode: 'number' }),
+  orders: bigint('orders', { mode: 'number' }),
+  gmv: decimal('gmv', { precision: 20, scale: 6 }),
+  commission: decimal('commission', { precision: 20, scale: 6 }),
+  conversion: decimal('conversion', { precision: 12, scale: 8 }),
+  currency: varchar('currency', { length: 3 }),
+  classifications: jsonb('classifications').notNull(),
+  provenance: jsonb('provenance').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  workspaceContentTimeUnique: uniqueIndex('ccos_performance_snapshots_content_time_idx')
+    .on(t.workspaceId, t.contentId, t.observedAt),
+  workspaceTimeIdx: index('ccos_performance_snapshots_workspace_time_idx')
+    .on(t.workspaceId, t.observedAt),
+  workspaceContentFk: foreignKey({
+    name: 'ccos_performance_snapshots_workspace_content_fk',
+    columns: [t.workspaceId, t.contentId],
+    foreignColumns: [ccosContents.workspaceId, ccosContents.id],
+  }).onDelete('cascade'),
+  nonNegativeCounts: check('ccos_performance_snapshots_non_negative_counts', sql`
+    (${t.views} IS NULL OR ${t.views} >= 0) AND (${t.clicks} IS NULL OR ${t.clicks} >= 0)
+    AND (${t.orders} IS NULL OR ${t.orders} >= 0)
+  `),
+  nonNegativeAmounts: check('ccos_performance_snapshots_non_negative_amounts', sql`
+    (${t.gmv} IS NULL OR ${t.gmv} >= 0) AND (${t.commission} IS NULL OR ${t.commission} >= 0)
+    AND (${t.conversion} IS NULL OR (${t.conversion} >= 0 AND ${t.conversion} <= 1))
+  `),
+  currencyRequired: check('ccos_performance_snapshots_currency_required', sql`
+    ((${t.gmv} IS NULL AND ${t.commission} IS NULL)
+      OR (${t.currency} IS NOT NULL AND ${t.currency} ~ '^[A-Z]{3}$'))
+  `),
+  classificationProvenanceShape: check('ccos_performance_snapshots_classification_provenance_shape', sql`
+    COALESCE((jsonb_typeof(${t.classifications}) = 'object'
+    AND ${t.classifications} ?& ARRAY['views','clicks','orders','gmv','commission','conversion']
+    AND (${t.classifications} - ARRAY['views','clicks','orders','gmv','commission','conversion']) = '{}'::jsonb
+    AND ${t.provenance}->>'schemaVersion' = '1'
+    AND length(${t.provenance}->>'source') BETWEEN 1 AND 64
+    AND jsonb_typeof(${t.provenance}->'metrics') = 'object'
+    AND (${t.provenance}->'metrics') ?& ARRAY['views','clicks','orders','gmv','commission','conversion']
+    AND ((${t.provenance}->'metrics') - ARRAY['views','clicks','orders','gmv','commission','conversion']) = '{}'::jsonb
+    AND jsonb_typeof(${t.provenance}->'metrics'->'views') = 'object'
+    AND jsonb_typeof(${t.provenance}->'metrics'->'clicks') = 'object'
+    AND jsonb_typeof(${t.provenance}->'metrics'->'orders') = 'object'
+    AND jsonb_typeof(${t.provenance}->'metrics'->'gmv') = 'object'
+    AND jsonb_typeof(${t.provenance}->'metrics'->'commission') = 'object'
+    AND jsonb_typeof(${t.provenance}->'metrics'->'conversion') = 'object'
+    AND ${t.provenance}->'metrics'->'views'->>'classification' = ${t.classifications}->>'views'
+    AND ${t.provenance}->'metrics'->'clicks'->>'classification' = ${t.classifications}->>'clicks'
+    AND ${t.provenance}->'metrics'->'orders'->>'classification' = ${t.classifications}->>'orders'
+    AND ${t.provenance}->'metrics'->'gmv'->>'classification' = ${t.classifications}->>'gmv'
+    AND ${t.provenance}->'metrics'->'commission'->>'classification' = ${t.classifications}->>'commission'
+    AND ${t.provenance}->'metrics'->'conversion'->>'classification' = ${t.classifications}->>'conversion'
+    AND ${t.provenance}->'metrics'->'views'->>'source' = ${t.provenance}->>'source'
+    AND ${t.provenance}->'metrics'->'clicks'->>'source' = ${t.provenance}->>'source'
+    AND ${t.provenance}->'metrics'->'orders'->>'source' = ${t.provenance}->>'source'
+    AND ${t.provenance}->'metrics'->'gmv'->>'source' = ${t.provenance}->>'source'
+    AND ${t.provenance}->'metrics'->'commission'->>'source' = ${t.provenance}->>'source'
+    AND ${t.provenance}->'metrics'->'conversion'->>'source' = ${t.provenance}->>'source'
+    AND (${t.provenance}->'metrics'->'views') ? 'provenance'
+    AND (${t.provenance}->'metrics'->'clicks') ? 'provenance'
+    AND (${t.provenance}->'metrics'->'orders') ? 'provenance'
+    AND (${t.provenance}->'metrics'->'gmv') ? 'provenance'
+    AND (${t.provenance}->'metrics'->'commission') ? 'provenance'
+    AND (${t.provenance}->'metrics'->'conversion') ? 'provenance'
+    AND ${t.classifications}->>'views' IN ('observed','calculated','inferred','self-reported','unavailable')
+    AND ${t.classifications}->>'clicks' IN ('observed','calculated','inferred','self-reported','unavailable')
+    AND ${t.classifications}->>'orders' IN ('observed','calculated','inferred','self-reported','unavailable')
+    AND ${t.classifications}->>'gmv' IN ('observed','calculated','inferred','self-reported','unavailable')
+    AND ${t.classifications}->>'commission' IN ('observed','calculated','inferred','self-reported','unavailable')
+    AND ${t.classifications}->>'conversion' IN ('observed','calculated','inferred','self-reported','unavailable')
+    AND ((${t.views} IS NULL) = (${t.classifications}->>'views' = 'unavailable'))
+    AND ((${t.clicks} IS NULL) = (${t.classifications}->>'clicks' = 'unavailable'))
+    AND ((${t.orders} IS NULL) = (${t.classifications}->>'orders' = 'unavailable'))
+    AND ((${t.gmv} IS NULL) = (${t.classifications}->>'gmv' = 'unavailable'))
+    AND ((${t.commission} IS NULL) = (${t.classifications}->>'commission' = 'unavailable'))
+    AND ((${t.conversion} IS NULL) = (${t.classifications}->>'conversion' = 'unavailable'))
+  ), FALSE)
+  `),
+}));
+
 // ============================================================
 // OAuth state and probe result tables
 // ============================================================

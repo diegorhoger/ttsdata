@@ -22,6 +22,8 @@ import {
   type UpdateCCOSNextActionInput,
   type UpdateCCOSProductInput,
   type UpdateCCOSStoreInput,
+  type CreateCCOSPerformanceSnapshotInput,
+  type PerformanceSnapshot,
 } from '@ttsdata/db';
 import { pool } from '../lib/db';
 import { requireAuth, requireRoles } from '../lib/auth';
@@ -54,6 +56,32 @@ const dateValue: z.ZodType<Date, z.ZodTypeDef, unknown> = z.preprocess(
   (value) => typeof value === 'string' ? new Date(value) : value,
   z.date(),
 );
+const metricClassification = z.enum(['observed', 'calculated', 'inferred', 'self-reported', 'unavailable']);
+const countMetric = z.object({ value: z.number().int().safe().nonnegative().nullable(), classification: metricClassification, provenance: z.unknown().optional() }).strict();
+const amountMetric = z.object({ value: z.string().regex(/^\d{1,14}(?:\.\d{1,6})?$/).nullable(), classification: metricClassification, provenance: z.unknown().optional() }).strict();
+const conversionMetric = z.object({ value: z.string().regex(/^(?:0(?:\.\d{1,8})?|1(?:\.0{1,8})?|\.\d{1,8})$/).nullable(), classification: metricClassification, provenance: z.unknown().optional() }).strict();
+const performanceMetricShape = {
+  views: countMetric.optional(), clicks: countMetric.optional(), orders: countMetric.optional(),
+  gmv: amountMetric.optional(), commission: amountMetric.optional(), conversion: conversionMetric.optional(),
+};
+const createPerformanceSnapshotSchema = z.object({
+  observedAt: dateValue,
+  source: z.string().trim().min(1).max(64),
+  currency: z.string().regex(/^[A-Z]{3}$/).optional(),
+  metrics: z.object(performanceMetricShape).strict(),
+}).strict().superRefine((snapshot, context) => {
+  for (const [metric, reading] of Object.entries(snapshot.metrics)) {
+    if (!reading) continue;
+    const unavailable = reading.value === null;
+    if (unavailable !== (reading.classification === 'unavailable')) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ['metrics', metric], message: 'Null values must be classified unavailable; available values cannot be unavailable' });
+    }
+  }
+  if ((snapshot.metrics.gmv?.value !== undefined && snapshot.metrics.gmv.value !== null)
+      || (snapshot.metrics.commission?.value !== undefined && snapshot.metrics.commission.value !== null)) {
+    if (!snapshot.currency) context.addIssue({ code: z.ZodIssueCode.custom, path: ['currency'], message: 'Currency is required for GMV or commission values' });
+  }
+});
 const storeParamsSchema = z.object({ storeId: z.string().uuid() }).strict();
 const partnershipParamsSchema = z.object({ partnershipId: z.string().uuid() }).strict();
 const productParamsSchema = z.object({ productId: z.string().uuid() }).strict();
@@ -320,6 +348,9 @@ type StorePartnershipRepository = {
   listTemplateVersions(workspaceId: string, type?: string): Promise<CCOSTemplateVersionRecord[]>;
   getLatestTemplateVersion(workspaceId: string, type: string): Promise<CCOSTemplateVersionRecord | null>;
   renderTemplate(template: CCOSTemplateVersionRecord, context: Record<string, string>): { subject: string; body: string };
+  createPerformanceSnapshot(input: CreateCCOSPerformanceSnapshotInput): Promise<PerformanceSnapshot>;
+  listPerformanceSnapshots(workspaceId: string, filter?: { contentId?: string; productId?: string; from?: Date; to?: Date }): Promise<PerformanceSnapshot[]>;
+  getPerformanceComparisons(workspaceId: string, contentId: string, snapshotId?: string): Promise<{ snapshot: PerformanceSnapshot; comparisons: unknown } | null>;
 };
 
 async function validateInteractionReferences(
@@ -534,6 +565,48 @@ export async function registerCCOSRoutes(app: FastifyInstance, options: CCOSRout
     const content = await repository.getContent(request.auth!.workspaceId, contentId);
     if (!content) throw new AppError('Content not found', 404, 'NOT_FOUND');
     return reply.send({ content });
+  });
+
+  app.post('/contents/:contentId/performance', {
+    preHandler: [authenticate, authorizeWorkspaceWrite],
+  }, async (request, reply) => {
+    const { contentId } = parse(contentParamsSchema, request.params);
+    const workspaceId = request.auth!.workspaceId;
+    if (!await repository.getContent(workspaceId, contentId)) throw new AppError('Content not found', 404, 'NOT_FOUND');
+    const snapshot = await repository.createPerformanceSnapshot({
+      workspaceId, contentId, ...parse(createPerformanceSnapshotSchema, request.body),
+    });
+    return reply.status(201).send({ snapshot });
+  });
+
+  app.get('/contents/:contentId/performance', { preHandler: authenticate }, async (request, reply) => {
+    const { contentId } = parse(contentParamsSchema, request.params);
+    const query = parse(z.object({ from: dateValue.optional(), to: dateValue.optional() }).strict()
+      .refine((value) => !value.from || !value.to || value.from <= value.to, 'from must be at or before to'), request.query);
+    const workspaceId = request.auth!.workspaceId;
+    if (!await repository.getContent(workspaceId, contentId)) throw new AppError('Content not found', 404, 'NOT_FOUND');
+    const snapshots = await repository.listPerformanceSnapshots(workspaceId, { contentId, ...query });
+    const latest = snapshots[snapshots.length - 1];
+    const comparison = latest ? await repository.getPerformanceComparisons(workspaceId, contentId, latest.id) : null;
+    return reply.send({ snapshots, comparisons: comparison?.comparisons ?? null });
+  });
+
+  app.get('/products/:productId/performance', { preHandler: authenticate }, async (request, reply) => {
+    const { productId } = parse(productParamsSchema, request.params);
+    const query = parse(z.object({ from: dateValue.optional(), to: dateValue.optional() }).strict()
+      .refine((value) => !value.from || !value.to || value.from <= value.to, 'from must be at or before to'), request.query);
+    const workspaceId = request.auth!.workspaceId;
+    if (!await repository.getProduct(workspaceId, productId)) throw new AppError('Product not found', 404, 'NOT_FOUND');
+    const snapshots = await repository.listPerformanceSnapshots(workspaceId, { productId, ...query });
+    const contentIds = [...new Set(snapshots.map(({ contentId }) => contentId))];
+    const comparisonsByContent: Record<string, unknown> = {};
+    for (const contentId of contentIds) {
+      const latest = snapshots.filter((item) => item.contentId === contentId).at(-1);
+      const comparison = latest
+        ? await repository.getPerformanceComparisons(workspaceId, contentId, latest.id) : null;
+      if (comparison) comparisonsByContent[contentId] = comparison.comparisons;
+    }
+    return reply.send({ snapshots, comparisonsByContent });
   });
 
   app.patch('/contents/:contentId', {

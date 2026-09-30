@@ -729,4 +729,57 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
       [workspaceB, interaction.id, product.id],
     )).rejects.toMatchObject({ code: '23503' });
   });
+
+  it('stores idempotent timestamped performance snapshots with sparse metrics and tenant-scoped content/product history', async () => {
+    const store = await repository.createStore({ workspaceId: workspaceA, name: 'Performance Store' });
+    const partnership = await repository.createPartnership({ workspaceId: workspaceA, storeId: store.id, type: 'affiliate' });
+    const product = await repository.createProduct({ workspaceId: workspaceA, partnershipId: partnership.id, name: 'Perf Product' });
+    const content = await repository.createContent({ workspaceId: workspaceA, productId: product.id, platform: 'manual' });
+    const baselineAt = new Date('2026-09-29T12:00:00.000Z');
+    const currentAt = new Date('2026-09-30T12:00:00.000Z');
+    const baseline = await repository.createPerformanceSnapshot({
+      workspaceId: workspaceA, contentId: content.id, observedAt: baselineAt, source: 'manual',
+      metrics: { views: { value: 100, classification: 'observed', provenance: { sourceId: 'report-a' } } },
+    });
+    const current = await repository.createPerformanceSnapshot({
+      workspaceId: workspaceA, contentId: content.id, observedAt: currentAt, source: 'manual', currency: 'BRL',
+      metrics: {
+        views: { value: 135, classification: 'observed', provenance: { sourceId: 'report-b' } },
+        gmv: { value: '250.000000', classification: 'self-reported' },
+      },
+    });
+    const repeated = await repository.createPerformanceSnapshot({
+      workspaceId: workspaceA, contentId: content.id, observedAt: currentAt, source: 'manual', currency: 'BRL',
+      metrics: {
+        views: { value: 135, classification: 'observed', provenance: { sourceId: 'report-b' } },
+        gmv: { value: '250.000000', classification: 'self-reported' },
+      },
+    });
+    expect(repeated.id).toBe(current.id);
+    expect(repeated.views).toBe(135);
+    expect(repeated.clicks).toBeNull();
+    expect(repeated.classifications.clicks).toBe('unavailable');
+    await expect(pool.query(
+      `INSERT INTO ccos_performance_snapshots
+        (workspace_id, content_id, observed_at, gmv, classifications, provenance)
+       SELECT workspace_id, content_id, observed_at + INTERVAL '1 second', gmv, classifications, provenance
+         FROM ccos_performance_snapshots WHERE id = $1`,
+      [repeated.id],
+    )).rejects.toMatchObject({ code: '23514' });
+    expect(await repository.listPerformanceSnapshots(workspaceB, { productId: product.id })).toEqual([]);
+    expect(await repository.listPerformanceSnapshots(workspaceA, { productId: product.id, from: currentAt, to: currentAt }))
+      .toHaveLength(1);
+    const comparison = await repository.getPerformanceComparisons(workspaceA, content.id, current.id);
+    expect(comparison?.comparisons['24h'].values.views.delta).toBe(35);
+    expect(comparison?.comparisons['24h'].values.clicks.delta).toBeNull();
+    expect(comparison?.comparisons['48h'].baselineAt).toBeNull();
+    await expect(repository.createPerformanceSnapshot({
+      workspaceId: workspaceB, contentId: content.id, observedAt: currentAt, source: 'manual', metrics: {},
+    })).rejects.toThrow('CCOS content not found in workspace');
+    await expect(repository.createPerformanceSnapshot({
+      workspaceId: workspaceA, contentId: content.id, observedAt: currentAt, source: 'manual',
+      metrics: { views: { value: null, classification: 'observed' } },
+    })).rejects.toThrow('Invalid views performance classification');
+    expect(baseline.id).not.toBe(current.id);
+  });
 });

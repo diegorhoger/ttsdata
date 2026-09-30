@@ -8,6 +8,7 @@ import {
   type ProductStatus,
 } from '../ccos/lifecycle';
 import { getNextActionRule, type NextActionRuleResult } from '../ccos/next-actions';
+import { comparePerformanceSnapshots, PERFORMANCE_METRICS, type MetricClassification, type PerformanceMetric, type PerformanceSnapshot } from '../ccos/performance';
 
 export type PartnershipType = 'inbound_invite' | 'outbound_prospecting' | 'affiliate' | 'paid_campaign' | 'gifting';
 export type CCOSPriority = 'low' | 'normal' | 'high' | 'urgent';
@@ -110,6 +111,38 @@ export interface UpdateCCOSContentInput {
   adAuthorizationCode?: string | null;
   adAuthorizationCreatedAt?: Date | null;
   adAuthorizationExpiresAt?: Date | null;
+}
+
+export interface CreateCCOSPerformanceSnapshotInput {
+  workspaceId: string;
+  contentId: string;
+  observedAt: Date;
+  currency?: string;
+  metrics: Partial<Record<PerformanceMetric, { value: number | string | null; classification: MetricClassification; provenance?: unknown }>>;
+  source: string;
+}
+
+type PerformanceRow = {
+  id: string; workspace_id: string; content_id: string; product_id: string; observed_at: Date;
+  views: number | string | null; clicks: number | string | null; orders: number | string | null; gmv: string | null;
+  commission: string | null; conversion: string | null; currency: string | null;
+  classifications: Record<PerformanceMetric, MetricClassification>; provenance: PerformanceSnapshot['provenance'];
+  created_at: Date;
+};
+
+function mapPerformance(row: PerformanceRow): PerformanceSnapshot {
+  const count = (value: number | string | null, metric: string): number | null => {
+    if (value === null) return null;
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed) || parsed < 0) throw new Error(`Stored ${metric} count exceeds the safe integer range`);
+    return parsed;
+  };
+  return {
+    id: row.id, workspaceId: row.workspace_id, contentId: row.content_id, productId: row.product_id,
+    observedAt: row.observed_at, views: count(row.views, 'views'), clicks: count(row.clicks, 'clicks'), orders: count(row.orders, 'orders'),
+    gmv: row.gmv, commission: row.commission, conversion: row.conversion, currency: row.currency,
+    classifications: row.classifications, provenance: row.provenance, createdAt: row.created_at,
+  };
 }
 
 export interface CreateCCOSNextActionInput {
@@ -808,6 +841,98 @@ export class CCOSRepository {
        ORDER BY updated_at DESC, created_at DESC`, values,
     );
     return result.rows.map(mapContent);
+  }
+
+  async createPerformanceSnapshot(input: CreateCCOSPerformanceSnapshotInput): Promise<PerformanceSnapshot> {
+    if (!input.source.trim() || input.source.length > 64 || !Number.isFinite(input.observedAt.getTime())) {
+      throw new Error('Invalid CCOS performance snapshot source or timestamp');
+    }
+    const valuesByMetric: Record<PerformanceMetric, number | string | null> = {
+      views: null, clicks: null, orders: null, gmv: null, commission: null, conversion: null,
+    };
+    const classifications = {} as Record<PerformanceMetric, MetricClassification>;
+    const metricProvenance: Partial<Record<PerformanceMetric, unknown>> = {};
+    for (const metric of PERFORMANCE_METRICS) {
+      const reading = input.metrics[metric];
+      const classification = reading?.value === undefined || reading.value === null ? 'unavailable' : reading.classification;
+      if (reading && !['observed', 'calculated', 'inferred', 'self-reported', 'unavailable'].includes(reading.classification)) {
+        throw new Error(`Invalid ${metric} performance classification`);
+      }
+      if ((reading?.value === null && reading.classification !== 'unavailable')
+          || (reading?.value !== undefined && reading.value !== null && reading.classification === 'unavailable')) {
+        throw new Error(`Invalid ${metric} performance classification for value`);
+      }
+      if (reading?.value !== undefined && reading.value !== null) {
+        const valid = metric === 'views' || metric === 'clicks' || metric === 'orders'
+          ? typeof reading.value === 'number' && Number.isSafeInteger(reading.value) && reading.value >= 0
+          : metric === 'conversion'
+            ? typeof reading.value === 'string' && /^(?:0(?:\.\d{1,8})?|1(?:\.0{1,8})?|\.\d{1,8})$/.test(reading.value)
+            : typeof reading.value === 'string' && /^\d{1,14}(?:\.\d{1,6})?$/.test(reading.value);
+        if (!valid) throw new Error(`Invalid ${metric} performance value`);
+      }
+      valuesByMetric[metric] = reading?.value ?? null;
+      classifications[metric] = classification;
+      metricProvenance[metric] = { classification, source: input.source, provenance: reading?.provenance ?? null };
+    }
+    if ((valuesByMetric.gmv !== null || valuesByMetric.commission !== null)
+        && (!input.currency || !/^[A-Z]{3}$/.test(input.currency))) {
+      throw new Error('Currency is required for GMV or commission values');
+    }
+    if (input.currency !== undefined && !/^[A-Z]{3}$/.test(input.currency)) {
+      throw new Error('Invalid performance snapshot currency');
+    }
+    const provenance: PerformanceSnapshot['provenance'] = {
+      schemaVersion: 1, source: input.source, metrics: metricProvenance,
+    };
+    const result = await this.pool.query<PerformanceRow>(
+      `INSERT INTO ccos_performance_snapshots
+        (workspace_id, content_id, observed_at, views, clicks, orders, gmv, commission, conversion,
+         currency, classifications, provenance)
+       SELECT $1, c.id, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb
+         FROM ccos_contents c WHERE c.workspace_id = $1 AND c.id = $2
+       ON CONFLICT (workspace_id, content_id, observed_at) DO UPDATE SET
+         views = EXCLUDED.views, clicks = EXCLUDED.clicks, orders = EXCLUDED.orders,
+         gmv = EXCLUDED.gmv, commission = EXCLUDED.commission, conversion = EXCLUDED.conversion,
+         currency = EXCLUDED.currency, classifications = EXCLUDED.classifications,
+         provenance = EXCLUDED.provenance
+       RETURNING id, workspace_id, content_id,
+         (SELECT product_id FROM ccos_contents WHERE workspace_id = $1 AND id = $2) AS product_id,
+         observed_at, views, clicks, orders, gmv, commission, conversion, currency, classifications,
+         provenance, created_at`,
+      [input.workspaceId, input.contentId, input.observedAt, valuesByMetric.views, valuesByMetric.clicks,
+        valuesByMetric.orders, valuesByMetric.gmv, valuesByMetric.commission, valuesByMetric.conversion,
+        input.currency ?? null, JSON.stringify(classifications), JSON.stringify(provenance)],
+    );
+    if (result.rowCount !== 1) throw new Error('CCOS content not found in workspace');
+    return mapPerformance(result.rows[0]);
+  }
+
+  async listPerformanceSnapshots(
+    workspaceId: string,
+    filter: { contentId?: string; productId?: string; from?: Date; to?: Date } = {},
+  ): Promise<PerformanceSnapshot[]> {
+    const values: unknown[] = [workspaceId];
+    const conditions = ['s.workspace_id = $1'];
+    const add = (condition: string, value: unknown) => { values.push(value); conditions.push(condition.replace('?', `$${values.length}`)); };
+    if (filter.contentId) add('s.content_id = ?', filter.contentId);
+    if (filter.productId) add('c.product_id = ?', filter.productId);
+    if (filter.from) add('s.observed_at >= ?', filter.from);
+    if (filter.to) add('s.observed_at <= ?', filter.to);
+    const result = await this.pool.query<PerformanceRow>(
+      `SELECT s.id, s.workspace_id, s.content_id, c.product_id, s.observed_at,
+        s.views, s.clicks, s.orders, s.gmv, s.commission, s.conversion, s.currency,
+        s.classifications, s.provenance, s.created_at
+       FROM ccos_performance_snapshots s
+       JOIN ccos_contents c ON c.workspace_id = s.workspace_id AND c.id = s.content_id
+       WHERE ${conditions.join(' AND ')} ORDER BY s.observed_at ASC, s.id ASC`, values,
+    );
+    return result.rows.map(mapPerformance);
+  }
+
+  async getPerformanceComparisons(workspaceId: string, contentId: string, snapshotId?: string) {
+    const snapshots = await this.listPerformanceSnapshots(workspaceId, { contentId });
+    const current = snapshotId ? snapshots.find((item) => item.id === snapshotId) : snapshots[snapshots.length - 1];
+    return current ? { snapshot: current, comparisons: comparePerformanceSnapshots(snapshots, current) } : null;
   }
 
   async getContent(workspaceId: string, contentId: string): Promise<CCOSContentRecord | null> {
