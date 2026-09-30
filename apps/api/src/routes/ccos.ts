@@ -2,6 +2,12 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
   CCOSRepository,
+  CCOSOpportunityRepository,
+  OPPORTUNITY_STATES,
+  OPPORTUNITY_ACTIONS,
+  OpportunityConflict,
+  OpportunityNotFound,
+  OpportunityValidationError,
   CCOSProductionQueueRepository,
   ProductionQueueConflict,
   ProductionQueueValidationError,
@@ -405,15 +411,49 @@ function parse<T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, input: unknown): 
 
 export type CCOSRouteOptions = {
   repository?: StorePartnershipRepository;
+  opportunityRepository?: Pick<CCOSOpportunityRepository, 'getOpportunity' | 'listHistory' | 'changeState' | 'createAction'>;
   productionQueueRepository?: Pick<CCOSProductionQueueRepository, 'getProductionQueue' | 'reorderProductionQueue' | 'listProductionQueueAudit'>;
   authenticate?: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
 };
 
 export async function registerCCOSRoutes(app: FastifyInstance, options: CCOSRouteOptions = {}) {
   const repository = options.repository ?? new CCOSRepository(pool);
+  const opportunityRepository = options.opportunityRepository ?? new CCOSOpportunityRepository(pool);
   const productionQueueRepository = options.productionQueueRepository ?? new CCOSProductionQueueRepository(pool);
   const authenticate = options.authenticate ?? requireAuth;
   const authorizeWorkspaceWrite = requireRoles('owner', 'admin');
+
+  const decisionEvidence = z.record(z.unknown()).refine((value) => Object.keys(value).length > 0 && JSON.stringify(value).length <= 20000, 'Non-empty evidence object required, maximum 20000 characters');
+  const reasonEvidence = { reason: z.string().trim().min(1).max(2000), evidence: decisionEvidence };
+  const opportunityError = (error: unknown): never => {
+    if (error instanceof OpportunityNotFound) throw new AppError(error.message, 404, 'NOT_FOUND');
+    if (error instanceof OpportunityConflict) throw new AppError(error.message, 409, 'OPPORTUNITY_CONFLICT');
+    if (error instanceof OpportunityValidationError) throw new AppError(error.message, 400, 'VALIDATION_ERROR');
+    throw error;
+  };
+  app.get('/partnerships/:partnershipId/opportunity', { preHandler: authenticate }, async (request, reply) => {
+    const { partnershipId } = parse(partnershipParamsSchema, request.params);
+    const opportunity = await opportunityRepository.getOpportunity(request.auth!.workspaceId, partnershipId);
+    if (!opportunity) throw new AppError('Partnership not found', 404, 'NOT_FOUND');
+    return reply.send({ opportunity });
+  });
+  app.get('/partnerships/:partnershipId/opportunity/history', { preHandler: authenticate }, async (request, reply) => {
+    const { partnershipId } = parse(partnershipParamsSchema, request.params);
+    if (!await opportunityRepository.getOpportunity(request.auth!.workspaceId, partnershipId)) throw new AppError('Partnership not found', 404, 'NOT_FOUND');
+    return reply.send({ history: await opportunityRepository.listHistory(request.auth!.workspaceId, partnershipId) });
+  });
+  app.patch('/partnerships/:partnershipId/opportunity', { preHandler: [authenticate, authorizeWorkspaceWrite] }, async (request, reply) => {
+    const { partnershipId } = parse(partnershipParamsSchema, request.params);
+    const body = parse(z.object({ state: z.enum(OPPORTUNITY_STATES), expectedRevision: z.number().int().safe().nonnegative(), ...reasonEvidence }).strict(), request.body);
+    try { return reply.send({ decision: await opportunityRepository.changeState(request.auth!.workspaceId, partnershipId, request.auth!.userId, body) }); }
+    catch (error) { return opportunityError(error); }
+  });
+  app.post('/partnerships/:partnershipId/opportunity/actions', { preHandler: [authenticate, authorizeWorkspaceWrite] }, async (request, reply) => {
+    const { partnershipId } = parse(partnershipParamsSchema, request.params);
+    const body = parse(z.object({ kind: z.enum(OPPORTUNITY_ACTIONS), title: z.string().trim().min(1).max(255), dueAt: dateValue.optional(), ...reasonEvidence }).strict(), request.body);
+    try { return reply.status(201).send(await opportunityRepository.createAction(request.auth!.workspaceId, partnershipId, request.auth!.userId, body)); }
+    catch (error) { return opportunityError(error); }
+  });
 
   app.get('/production-queue', { preHandler: authenticate }, async (request, reply) => {
     const query = parse(z.object({

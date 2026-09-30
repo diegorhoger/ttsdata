@@ -20,6 +20,8 @@ const CCOS_TABLES = [
   'ccos_performance_snapshots',
   'ccos_production_queue_state',
   'ccos_production_queue_audit',
+  'ccos_opportunity_states',
+  'ccos_opportunity_history',
 ] as const;
 type ForeignKeyExpectation = {
   name: string;
@@ -55,6 +57,12 @@ const tenantForeignKey = (
 });
 
 const CCOS_FOREIGN_KEYS: ForeignKeyExpectation[] = [
+  workspaceForeignKey('ccos_opportunity_states'),
+  workspaceForeignKey('ccos_opportunity_history'),
+  tenantForeignKey('ccos_opportunity_states_workspace_partnership_fk', 'ccos_opportunity_states', 'partnership_id', 'ccos_partnerships'),
+  tenantForeignKey('ccos_opportunity_history_workspace_partnership_fk', 'ccos_opportunity_history', 'partnership_id', 'ccos_partnerships'),
+  tenantForeignKey('ccos_opportunity_history_workspace_actor_fk', 'ccos_opportunity_history', 'actor_user_id', 'users', 'a'),
+  tenantForeignKey('ccos_opportunity_history_workspace_action_fk', 'ccos_opportunity_history', 'action_id', 'ccos_next_actions', 'a'),
   workspaceForeignKey('ccos_production_queue_state'),
   workspaceForeignKey('ccos_production_queue_audit'),
   tenantForeignKey('ccos_queue_audit_workspace_actor_fk', 'ccos_production_queue_audit', 'actor_user_id', 'users', 'r'),
@@ -103,6 +111,7 @@ if (!parsedUrl.pathname.slice(1).endsWith('_test')) {
 const packageRoot = resolve(process.cwd());
 const migrationsFolder = resolve(packageRoot, 'drizzle');
 const rollbackPaths = [
+  resolve(migrationsFolder, 'rollback/0009_yummy_fantastic_four.down.sql'),
   resolve(migrationsFolder, 'rollback/0008_red_the_santerians.down.sql'),
   resolve(migrationsFolder, 'rollback/0007_ccos_performance_snapshots.down.sql'),
   resolve(migrationsFolder, 'rollback/0006_nappy_raider.down.sql'),
@@ -125,6 +134,7 @@ async function runConstraintTests(): Promise<void> {
       'vitest.integration.config.ts',
       'packages/db/tests/ccos/integration.test.ts',
       'packages/db/tests/production-queue/integration.test.ts',
+      'packages/db/tests/opportunities/integration.test.ts',
     ], {
       cwd: resolve(packageRoot, '../..'),
       env: { ...process.env, TEST_DATABASE_URL },
@@ -145,7 +155,7 @@ async function getMigrationCreatedAt(): Promise<number[]> {
   const journal = JSON.parse(await readFile(journalPath, 'utf8')) as {
     entries?: Array<{ tag?: string; when?: number }>;
   };
-  const tags = ['0002_worried_lyja', '0003_silly_otto_octavius', '0004_brainy_black_bird', '0005_free_human_robot', '0006_nappy_raider', '0007_ccos_performance_snapshots', '0008_red_the_santerians'];
+  const tags = ['0002_worried_lyja', '0003_silly_otto_octavius', '0004_brainy_black_bird', '0005_free_human_robot', '0006_nappy_raider', '0007_ccos_performance_snapshots', '0008_red_the_santerians', '0009_yummy_fantastic_four'];
   const entries = tags.map((tag) => journal.entries?.find((entry) => entry.tag === tag));
   if (entries.some((entry) => !entry || typeof entry.when !== 'number')) {
     throw new Error('Migration journal is missing a CCOS migration entry');
@@ -154,6 +164,10 @@ async function getMigrationCreatedAt(): Promise<number[]> {
 }
 
 async function assertForwardSchema(): Promise<void> {
+  const opportunityChecks = await pool.query(`SELECT conname FROM pg_constraint WHERE conname = ANY($1::text[]) AND convalidated`, [['ccos_opportunity_states_revision_check', 'ccos_opportunity_history_shape_check']]);
+  if (opportunityChecks.rowCount !== 2) throw new Error('Opportunity CHECK constraints are missing');
+  const opportunityTrigger = await pool.query("SELECT 1 FROM pg_trigger WHERE tgrelid = 'public.ccos_opportunity_history'::regclass AND tgname = 'ccos_opportunity_history_immutable_trigger' AND tgenabled = 'O' AND NOT tgisinternal");
+  if (opportunityTrigger.rowCount !== 1) throw new Error('Opportunity append-only trigger is missing');
   const queueChecks = await pool.query(`SELECT conname FROM pg_constraint WHERE conname = ANY($1::text[])`,
     [['ccos_queue_state_revision_check', 'ccos_queue_state_order_check', 'ccos_queue_audit_shape_check']]);
   if (queueChecks.rowCount !== 3) throw new Error('Production queue CHECK constraints are missing');
