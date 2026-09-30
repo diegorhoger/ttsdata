@@ -21,4 +21,10 @@ describe('manual opportunity policy', () => {
     expect(opportunityEvidenceTextLength(dense)).toBeGreaterThan(20000);
     expect(() => validateOpportunityEvidence('Dense evidence', dense)).toThrow(OpportunityValidationError);
   });
+  it('bounds PostgreSQL expansion of negative subnormal numbers', () => {
+    const subnormal = { samples: Array(61).fill(-Number.MIN_VALUE) };
+    expect(JSON.stringify(subnormal).length).toBeLessThan(1000);
+    expect(opportunityEvidenceTextLength(subnormal)).toBeGreaterThan(20000);
+    expect(() => validateOpportunityEvidence('Subnormal evidence', subnormal)).toThrow(OpportunityValidationError);
+  });
 });
