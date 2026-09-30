@@ -31,8 +31,8 @@ describe('Opportunity PostgreSQL isolation, audit and human review', () => {
     if (ids.length) {
       await pool.query('BEGIN');
       try {
-        await pool.query('DELETE FROM users WHERE workspace_id = ANY($1::uuid[])', [ids]);
         await pool.query('DELETE FROM ccos_next_actions WHERE workspace_id = ANY($1::uuid[])', [ids]);
+        await pool.query('DELETE FROM users WHERE workspace_id = ANY($1::uuid[])', [ids]);
         await pool.query('DELETE FROM workspaces WHERE id = ANY($1::uuid[])', [ids]);
         await pool.query('COMMIT');
       } catch (error) {
