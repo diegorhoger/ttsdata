@@ -50,6 +50,11 @@ describe('CCOS deterministic production prioritization', () => {
     expect(b.components.stock.score).toBeNull();
     expect(orderProductionQueue([a, b], [], { stockState: 'in_stock', priority: 'high' })).toEqual([a]);
   });
+  it.each(['constructor', 'toString', '__proto__'])('treats inherited-key stock %s as missing', (stockState) => {
+    const item = score({ stockState });
+    expect(item.components.stock.score).toBeNull();
+    expect(Number.isFinite(item.score!)).toBe(true);
+  });
   it.each(['NaN', 'Infinity', '-1', '1e3', '1000'])('rejects invalid commission %s', (commissionRate) => {
     expect(() => score({ commissionRate })).toThrow();
   });
