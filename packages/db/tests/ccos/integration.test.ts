@@ -768,7 +768,7 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
     expect(comparison?.comparisons['48h'].baselineAt).toBeNull();
     await expect(repository.createPerformanceSnapshot({
       workspaceId: workspaceB, contentId: content.id, observedAt: currentAt, source: 'manual', metrics: {},
-    })).rejects.toMatchObject({ code: '23503' });
+    })).rejects.toThrow('CCOS content not found in workspace');
     await expect(repository.createPerformanceSnapshot({
       workspaceId: workspaceA, contentId: content.id, observedAt: currentAt, source: 'manual',
       metrics: { views: { value: null, classification: 'observed' } },
