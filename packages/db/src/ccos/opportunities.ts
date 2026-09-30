@@ -23,10 +23,34 @@ export class OpportunityValidationError extends Error {}
 export class OpportunityConflict extends Error {}
 export class OpportunityNotFound extends Error {}
 
+/** Upper-bound PostgreSQL jsonb::text length, including structural spaces. */
+export function opportunityEvidenceTextLength(value: unknown): number {
+  if (value === null || typeof value === 'boolean') return String(value).length;
+  if (typeof value === 'string') return JSON.stringify(value).length;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return Infinity;
+    const rendered = JSON.stringify(value);
+    return /e/i.test(rendered) ? 325 : rendered.length;
+  }
+  if (Array.isArray(value)) return 2 + value.reduce((length, item, index) => length
+    + (index ? 2 : 0) + opportunityEvidenceTextLength(item === undefined ? null : item), 0);
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value).filter(([, item]) => item !== undefined
+      && typeof item !== 'function' && typeof item !== 'symbol');
+    return 2 + entries.reduce((length, [key, item], index) => length + (index ? 2 : 0)
+      + JSON.stringify(key).length + 2 + opportunityEvidenceTextLength(item), 0);
+  }
+  return Infinity;
+}
+
+export function isValidOpportunityEvidence(evidence: unknown): evidence is Record<string, unknown> {
+  return Boolean(evidence) && !Array.isArray(evidence) && typeof evidence === 'object'
+    && Object.keys(evidence as object).length > 0 && opportunityEvidenceTextLength(evidence) <= 20000;
+}
+
 export function validateOpportunityEvidence(reason: string, evidence: Record<string, unknown>) {
   if (typeof reason !== 'string' || !reason.trim() || reason.length > 2000
-    || !evidence || Array.isArray(evidence) || typeof evidence !== 'object'
-    || Object.keys(evidence).length === 0 || JSON.stringify(evidence).length > 20000) {
+    || !isValidOpportunityEvidence(evidence)) {
     throw new OpportunityValidationError('A reason and non-empty evidence object (maximum 20000 characters) are required');
   }
 }

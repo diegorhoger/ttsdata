@@ -168,6 +168,12 @@ async function assertForwardSchema(): Promise<void> {
   if (opportunityChecks.rowCount !== 2) throw new Error('Opportunity CHECK constraints are missing');
   const opportunityTrigger = await pool.query("SELECT 1 FROM pg_trigger WHERE tgrelid = 'public.ccos_opportunity_history'::regclass AND tgname = 'ccos_opportunity_history_immutable_trigger' AND tgenabled = 'O' AND NOT tgisinternal");
   if (opportunityTrigger.rowCount !== 1) throw new Error('Opportunity append-only trigger is missing');
+  const deferredOpportunityRefs = await pool.query(`SELECT conname FROM pg_constraint
+    WHERE conname = ANY($1::text[]) AND condeferrable AND condeferred`, [[
+    'ccos_opportunity_history_workspace_actor_fk',
+    'ccos_opportunity_history_workspace_action_fk',
+  ]]);
+  if (deferredOpportunityRefs.rowCount !== 2) throw new Error('Opportunity actor/action audit references must be initially deferred');
   const queueChecks = await pool.query(`SELECT conname FROM pg_constraint WHERE conname = ANY($1::text[])`,
     [['ccos_queue_state_revision_check', 'ccos_queue_state_order_check', 'ccos_queue_audit_shape_check']]);
   if (queueChecks.rowCount !== 3) throw new Error('Production queue CHECK constraints are missing');

@@ -46,6 +46,8 @@ EXCEPTION
  WHEN duplicate_object THEN null;
 END $$;
 --> statement-breakpoint
+ALTER TABLE "ccos_opportunity_history" ALTER CONSTRAINT "ccos_opportunity_history_workspace_actor_fk" DEFERRABLE INITIALLY DEFERRED;
+--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "ccos_next_actions_workspace_id_idx" ON "ccos_next_actions" USING btree ("workspace_id","id");
 --> statement-breakpoint
 DO $$ BEGIN
@@ -53,6 +55,8 @@ DO $$ BEGIN
 EXCEPTION
  WHEN duplicate_object THEN null;
 END $$;
+--> statement-breakpoint
+ALTER TABLE "ccos_opportunity_history" ALTER CONSTRAINT "ccos_opportunity_history_workspace_action_fk" DEFERRABLE INITIALLY DEFERRED;
 --> statement-breakpoint
 DO $$ BEGIN
  ALTER TABLE "ccos_opportunity_states" ADD CONSTRAINT "ccos_opportunity_states_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE cascade ON UPDATE no action;

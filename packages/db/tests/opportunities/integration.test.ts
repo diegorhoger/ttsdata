@@ -25,9 +25,21 @@ describe('Opportunity PostgreSQL isolation, audit and human review', () => {
     actor = first.user; partnership = first.partner; product = first.item; foreignActor = second.user; hidden = second.partner;
   });
   afterAll(async () => {
-    // Parent workspace deletion is the sole permitted deletion of append-only history.
+    // Deferred actor/action references preserve history during normal operation but
+    // permit a complete workspace teardown in one transaction.
     const ids = [a, b].filter(Boolean);
-    if (ids.length) await pool.query('DELETE FROM workspaces WHERE id = ANY($1::uuid[])', [ids]);
+    if (ids.length) {
+      await pool.query('BEGIN');
+      try {
+        await pool.query('DELETE FROM users WHERE workspace_id = ANY($1::uuid[])', [ids]);
+        await pool.query('DELETE FROM ccos_next_actions WHERE workspace_id = ANY($1::uuid[])', [ids]);
+        await pool.query('DELETE FROM workspaces WHERE id = ANY($1::uuid[])', [ids]);
+        await pool.query('COMMIT');
+      } catch (error) {
+        await pool.query('ROLLBACK');
+        throw error;
+      }
+    }
     await pool.end();
   });
   const evidence = { classification: 'self-reported', note: 'Operator reviewed campaign history' };

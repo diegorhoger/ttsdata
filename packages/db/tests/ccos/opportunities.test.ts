@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { OPPORTUNITY_ACTIONS, OPPORTUNITY_POLICY, OPPORTUNITY_STATES, OpportunityValidationError, validateOpportunityEvidence } from '../../src/ccos/opportunities';
+import { OPPORTUNITY_ACTIONS, OPPORTUNITY_POLICY, OPPORTUNITY_STATES, OpportunityValidationError, opportunityEvidenceTextLength, validateOpportunityEvidence } from '../../src/ccos/opportunities';
 
 describe('manual opportunity policy', () => {
   it('keeps opportunity assessment distinct from operational completion', () => {
@@ -14,5 +14,11 @@ describe('manual opportunity policy', () => {
       expect(() => validateOpportunityEvidence('Manual review', evidence as Record<string, unknown>)).toThrow(OpportunityValidationError);
     }
     expect(() => validateOpportunityEvidence(' ', { note: 'Review' })).toThrow(OpportunityValidationError);
+  });
+  it('uses PostgreSQL jsonb text sizing at the dense-array boundary', () => {
+    const dense = { samples: Array(8000).fill(1) };
+    expect(JSON.stringify(dense).length).toBeLessThan(20000);
+    expect(opportunityEvidenceTextLength(dense)).toBeGreaterThan(20000);
+    expect(() => validateOpportunityEvidence('Dense evidence', dense)).toThrow(OpportunityValidationError);
   });
 });

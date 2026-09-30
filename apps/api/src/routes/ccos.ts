@@ -8,6 +8,7 @@ import {
   OpportunityConflict,
   OpportunityNotFound,
   OpportunityValidationError,
+  isValidOpportunityEvidence,
   CCOSProductionQueueRepository,
   ProductionQueueConflict,
   ProductionQueueValidationError,
@@ -423,7 +424,7 @@ export async function registerCCOSRoutes(app: FastifyInstance, options: CCOSRout
   const authenticate = options.authenticate ?? requireAuth;
   const authorizeWorkspaceWrite = requireRoles('owner', 'admin');
 
-  const decisionEvidence = z.record(z.unknown()).refine((value) => Object.keys(value).length > 0 && JSON.stringify(value).length <= 20000, 'Non-empty evidence object required, maximum 20000 characters');
+  const decisionEvidence = z.record(z.unknown()).refine(isValidOpportunityEvidence, 'Non-empty evidence object required, maximum 20000 jsonb characters');
   const reasonEvidence = { reason: z.string().trim().min(1).max(2000), evidence: decisionEvidence };
   const opportunityError = (error: unknown): never => {
     if (error instanceof OpportunityNotFound) throw new AppError(error.message, 404, 'NOT_FOUND');

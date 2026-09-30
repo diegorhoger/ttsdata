@@ -39,6 +39,16 @@ describe('human-reviewed opportunity API', () => {
       expect((await app.inject({ method: 'PATCH', url: path, payload: decision })).statusCode).toBe(409);
     } finally { await app.close(); }
   });
+  it('rejects evidence that exceeds the PostgreSQL jsonb text boundary before repository access', async () => {
+    const { app, repository } = await setup();
+    try {
+      const response = await app.inject({ method: 'PATCH', url: path, payload: {
+        ...decision, evidence: { samples: Array(8000).fill(1) },
+      } });
+      expect(response.statusCode).toBe(400);
+      expect(repository.changeState).not.toHaveBeenCalled();
+    } finally { await app.close(); }
+  });
   it('supports all typed manual actions without send or automatic flags', async () => {
     const { app, repository } = await setup();
     try {
