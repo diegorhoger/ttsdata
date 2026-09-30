@@ -346,8 +346,8 @@ async function main(): Promise<void> {
       'DELETE FROM drizzle.__drizzle_migrations WHERE created_at = ANY($1::bigint[]) RETURNING id',
       [migrationCreatedAt],
     );
-    if (deleted.rowCount !== 6) {
-      throw new Error(`Expected six CCOS migration journal rows, removed ${deleted.rowCount ?? 0}`);
+    if (deleted.rowCount !== rollbackPaths.length) {
+      throw new Error(`Expected ${rollbackPaths.length} CCOS migration journal rows, removed ${deleted.rowCount ?? 0}`);
     }
     await client.query('COMMIT');
   } catch (error) {
