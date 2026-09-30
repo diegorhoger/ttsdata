@@ -429,6 +429,7 @@ export const ccosProducts = pgTable('ccos_products', {
 }, (t) => ({
   workspaceIdUnique: uniqueIndex('ccos_products_workspace_id_id_idx').on(t.workspaceId, t.id),
   workspacePartnershipIdx: index('ccos_products_workspace_partnership_idx').on(t.workspaceId, t.partnershipId),
+  productionQueueIdx: index('ccos_products_workspace_status_id_idx').on(t.workspaceId, t.status, t.id),
   workspacePartnershipFk: foreignKey({
     name: 'ccos_products_workspace_partnership_fk',
     columns: [t.workspaceId, t.partnershipId],
@@ -655,6 +656,31 @@ export const ccosMetricSnapshots = pgTable('ccos_metric_snapshots', {
 
 // Immutable-at-a-timestamp performance observations for a published content item.
 // A repeated write to the same content/time key is an upsert, not another snapshot.
+export const ccosProductionQueueState = pgTable('ccos_production_queue_state', {
+  workspaceId: uuid('workspace_id').primaryKey().references(() => workspaces.id, { onDelete: 'cascade' }),
+  revision: integer('revision').notNull().default(0),
+  productIds: jsonb('product_ids').notNull().default(sql`'[]'::jsonb`),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  revisionCheck: check('ccos_queue_state_revision_check', sql`${t.revision} >= 0`),
+  orderCheck: check('ccos_queue_state_order_check', sql`jsonb_typeof(${t.productIds}) = 'array'`),
+}));
+
+export const ccosProductionQueueAudit = pgTable('ccos_production_queue_audit', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  revision: integer('revision').notNull(),
+  actorUserId: uuid('actor_user_id').notNull(),
+  previousOrder: jsonb('previous_order').notNull(),
+  newOrder: jsonb('new_order').notNull(),
+  reason: text('reason').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  revisionUnique: uniqueIndex('ccos_queue_audit_workspace_revision_idx').on(t.workspaceId, t.revision),
+  actorFk: foreignKey({ name: 'ccos_queue_audit_workspace_actor_fk', columns: [t.workspaceId, t.actorUserId], foreignColumns: [users.workspaceId, users.id] }).onDelete('restrict'),
+  shapeCheck: check('ccos_queue_audit_shape_check', sql`${t.revision} > 0 AND length(trim(${t.reason})) > 0 AND jsonb_typeof(${t.previousOrder}) = 'array' AND jsonb_typeof(${t.newOrder}) = 'array'`),
+}));
+
 export const ccosPerformanceSnapshots = pgTable('ccos_performance_snapshots', {
   id: uuid('id').primaryKey().defaultRandom(),
   workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),

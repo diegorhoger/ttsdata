@@ -57,6 +57,13 @@
       "when": 1790800000000,
       "tag": "0007_ccos_performance_snapshots",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790806757295,
+      "tag": "0008_red_the_santerians",
+      "breakpoints": true
     }
   ]
 }

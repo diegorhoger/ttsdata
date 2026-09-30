@@ -5,6 +5,7 @@ import Fastify, {
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { registerCCOSRoutes, type CCOSRouteOptions } from '../../apps/api/src/routes/ccos';
 import { errorHandler } from '../../apps/api/src/lib/errors';
+import { ProductionQueueConflict, ProductionQueueValidationError } from '../../packages/db/src/repositories/production-queue';
 
 const WORKSPACE_ID = '11111111-1111-4111-8111-111111111111';
 const STORE_ID = '22222222-2222-4222-8222-222222222222';
@@ -171,6 +172,7 @@ function createRepository() {
 async function buildApp(
   repository: ReturnType<typeof createRepository>,
   role: 'owner' | 'admin' | 'analyst' | 'viewer' = 'owner',
+  productionQueueRepository?: CCOSRouteOptions['productionQueueRepository'],
 ) {
   const app = Fastify({ logger: false });
   app.setErrorHandler(errorHandler);
@@ -186,6 +188,7 @@ async function buildApp(
   await app.register(registerCCOSRoutes, {
     prefix: '/api/ccos',
     repository: repository as CCOSRouteOptions['repository'],
+    productionQueueRepository,
     authenticate,
   });
   return app;
@@ -195,6 +198,41 @@ const apps: Array<Awaited<ReturnType<typeof buildApp>>> = [];
 
 afterEach(async () => {
   await Promise.all(apps.splice(0).map((app) => app.close()));
+});
+
+describe('CCOS production queue routes', () => {
+  const body = { expectedRevision: 0, membershipToken: 'a'.repeat(64), productIds: [PRODUCT_ID], reason: 'Launch priority' };
+  const queueRepository = () => ({ getProductionQueue: vi.fn().mockResolvedValue({ revision: 0, items: [] }),
+    reorderProductionQueue: vi.fn().mockResolvedValue({ revision: 1, items: [] }), listProductionQueueAudit: vi.fn().mockResolvedValue([]) });
+  it('scopes queue reads and sort/filter inputs to the authenticated tenant', async () => {
+    const queue = queueRepository(); const app = await buildApp(createRepository(), 'viewer', queue); apps.push(app);
+    const response = await app.inject({ method: 'GET', url: '/api/ccos/production-queue?sort=commission&missing=only&signal=commission' });
+    expect(response.statusCode).toBe(200);
+    expect(queue.getProductionQueue).toHaveBeenCalledWith(WORKSPACE_ID, { sort: 'commission', missing: 'only', signal: 'commission' });
+    expect((await app.inject({ method: 'GET', url: '/api/ccos/production-queue?workspaceId=other' })).statusCode).toBe(400);
+  });
+  it('takes actor and workspace from auth and rejects tenant/order/duplicate injection', async () => {
+    const queue = queueRepository(); const app = await buildApp(createRepository(), 'owner', queue); apps.push(app);
+    expect((await app.inject({ method: 'PUT', url: '/api/ccos/production-queue/order', payload: body })).statusCode).toBe(200);
+    expect(queue.reorderProductionQueue).toHaveBeenCalledWith(WORKSPACE_ID, '44444444-4444-4444-8444-444444444444', body);
+    for (const invalid of [{ ...body, workspaceId: WORKSPACE_ID }, { ...body, productIds: [PRODUCT_ID, PRODUCT_ID] }, { ...body, expectedRevision: -1 }]) {
+      expect((await app.inject({ method: 'PUT', url: '/api/ccos/production-queue/order', payload: invalid })).statusCode).toBe(400);
+    }
+  });
+  it('rejects viewer writes before touching storage', async () => {
+    const queue = queueRepository(); const app = await buildApp(createRepository(), 'viewer', queue); apps.push(app);
+    expect((await app.inject({ method: 'PUT', url: '/api/ccos/production-queue/order', payload: body })).statusCode).toBe(403);
+    expect(queue.reorderProductionQueue).not.toHaveBeenCalled();
+  });
+  it('maps stale queue CAS to 409 and invalid membership to 400; scopes audit reads', async () => {
+    const queue = queueRepository(); const app = await buildApp(createRepository(), 'admin', queue); apps.push(app);
+    queue.reorderProductionQueue.mockRejectedValueOnce(new ProductionQueueConflict('Reload'));
+    expect((await app.inject({ method: 'PUT', url: '/api/ccos/production-queue/order', payload: body })).statusCode).toBe(409);
+    queue.reorderProductionQueue.mockRejectedValueOnce(new ProductionQueueValidationError('Invalid membership'));
+    expect((await app.inject({ method: 'PUT', url: '/api/ccos/production-queue/order', payload: body })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'GET', url: '/api/ccos/production-queue/audit' })).statusCode).toBe(200);
+    expect(queue.listProductionQueueAudit).toHaveBeenCalledWith(WORKSPACE_ID);
+  });
 });
 
 describe('CCOS store and partnership routes', () => {

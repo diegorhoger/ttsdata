@@ -2,6 +2,10 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
   CCOSRepository,
+  CCOSProductionQueueRepository,
+  ProductionQueueConflict,
+  ProductionQueueValidationError,
+  QUEUE_SIGNALS,
   type CCOSContentRecord,
   type CCOSInteractionRecord,
   type CCOInteractionSourceRecord,
@@ -401,13 +405,49 @@ function parse<T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, input: unknown): 
 
 export type CCOSRouteOptions = {
   repository?: StorePartnershipRepository;
+  productionQueueRepository?: Pick<CCOSProductionQueueRepository, 'getProductionQueue' | 'reorderProductionQueue' | 'listProductionQueueAudit'>;
   authenticate?: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
 };
 
 export async function registerCCOSRoutes(app: FastifyInstance, options: CCOSRouteOptions = {}) {
   const repository = options.repository ?? new CCOSRepository(pool);
+  const productionQueueRepository = options.productionQueueRepository ?? new CCOSProductionQueueRepository(pool);
   const authenticate = options.authenticate ?? requireAuth;
   const authorizeWorkspaceWrite = requireRoles('owner', 'admin');
+
+  app.get('/production-queue', { preHandler: authenticate }, async (request, reply) => {
+    const query = parse(z.object({
+      sort: z.enum(['manual', 'score', ...QUEUE_SIGNALS]).optional(),
+      signal: z.enum(QUEUE_SIGNALS).optional(),
+      missing: z.enum(['include', 'only', 'exclude']).optional(),
+      stockState: z.string().min(1).max(64).optional(),
+      priority: priority.optional(),
+    }).strict(), request.query);
+    try { return reply.send(await productionQueueRepository.getProductionQueue(request.auth!.workspaceId, query)); }
+    catch (error) {
+      if (error instanceof ProductionQueueValidationError) throw new AppError(error.message, 400, 'VALIDATION_ERROR');
+      throw error;
+    }
+  });
+
+  app.put('/production-queue/order', { preHandler: [authenticate, authorizeWorkspaceWrite] }, async (request, reply) => {
+    const body = parse(z.object({
+      expectedRevision: z.number().int().safe().nonnegative(),
+      membershipToken: z.string().regex(/^[a-f0-9]{64}$/),
+      productIds: z.array(z.string().uuid()).max(1000).refine((ids) => new Set(ids).size === ids.length, 'Duplicate product IDs'),
+      reason: z.string().trim().min(1).max(2000),
+    }).strict(), request.body);
+    try { return reply.send(await productionQueueRepository.reorderProductionQueue(request.auth!.workspaceId, request.auth!.userId, body)); }
+    catch (error) {
+      if (error instanceof ProductionQueueConflict) throw new AppError(error.message, 409, 'QUEUE_CONFLICT');
+      if (error instanceof ProductionQueueValidationError) throw new AppError(error.message, 400, 'VALIDATION_ERROR');
+      throw error;
+    }
+  });
+
+  app.get('/production-queue/audit', { preHandler: authenticate }, async (request, reply) => {
+    return reply.send({ audit: await productionQueueRepository.listProductionQueueAudit(request.auth!.workspaceId) });
+  });
 
   app.get('/stores', { preHandler: authenticate }, async (request, reply) => {
     return reply.send({ stores: await repository.listStores(request.auth!.workspaceId) });

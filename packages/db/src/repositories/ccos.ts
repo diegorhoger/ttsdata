@@ -750,6 +750,8 @@ export class CCOSRepository {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      // Same lock order as production-queue reorder; serialize queue membership transitions.
+      await client.query('SELECT id FROM workspaces WHERE id = $1 FOR UPDATE', [workspaceId]);
       const selected = await client.query<ProductRow>(
         `SELECT ${PRODUCT_COLUMNS} FROM ccos_products
          WHERE workspace_id = $1 AND id = $2 FOR UPDATE`, [workspaceId, productId],
