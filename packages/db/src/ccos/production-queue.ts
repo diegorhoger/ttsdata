@@ -23,7 +23,7 @@ export type QueueCandidate = {
   responsiveness: number | null; responseAt: Date | null;
 };
 const priorities: Record<string, number> = { low: 0, normal: 33, high: 67, urgent: 100 };
-const stocks: Record<string, number> = { in_stock: 100, low_stock: 40, out_of_stock: 0 };
+const stocks = new Map<string, number>([['in_stock', 100], ['low_stock', 40], ['out_of_stock', 0]]);
 const weights: Record<QueueSignal, number> = { commission: 25, stock: 20, performance: 25, responsiveness: 10, strategic: 20 };
 export function scoreProductionCandidate(candidate: QueueCandidate, asOf: Date) {
   if (!Number.isFinite(asOf.getTime())) throw new Error('Invalid production scoring timestamp');
@@ -48,7 +48,7 @@ export function scoreProductionCandidate(candidate: QueueCandidate, asOf: Date) 
     commission: component('commission', candidate.commissionRate,
       commissionRate === null ? null : Math.min(100, commissionRate),
       'product.commission_rate', null, 'self-reported', candidate.provenance),
-    stock: component('stock', candidate.stockState, candidate.stockState === null ? null : stocks[candidate.stockState] ?? null,
+    stock: component('stock', candidate.stockState, candidate.stockState === null ? null : stocks.get(candidate.stockState) ?? null,
       'product.stock_state', null, 'self-reported', candidate.provenance),
     performance: component('performance', candidate.conversion,
       conversion === null ? null : conversion * 100,

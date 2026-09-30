@@ -9,7 +9,7 @@ describe('Production queue PostgreSQL isolation, constraints and atomic reorder'
   const pool = new Pool({ connectionString: url });
   const repository = new CCOSProductionQueueRepository(pool);
   let a: string; let b: string; let actorA: string; let actorB: string;
-  let productA: string; let productA2: string; let hidden: string; let ineligible: string;
+  let productA: string; let productA2: string; let hidden: string; let ineligible: string; let partnershipA: string;
 
   beforeAll(async () => {
     [a, b] = (await pool.query("INSERT INTO workspaces(name) VALUES ('Queue A'), ('Queue B') RETURNING id")).rows.map((row) => row.id);
@@ -19,10 +19,11 @@ describe('Production queue PostgreSQL isolation, constraints and atomic reorder'
       const partnership = (await pool.query("INSERT INTO ccos_partnerships(workspace_id,store_id,type) VALUES ($1,$2,'affiliate') RETURNING id", [workspaceId, store])).rows[0].id;
       const products = (await pool.query(`INSERT INTO ccos_products(workspace_id,partnership_id,name,status,commission_rate)
         VALUES ($1,$2,'Missing','received',NULL), ($1,$2,'Zero','content_queue',0), ($1,$2,'Started','in_production',50) RETURNING id`, [workspaceId, partnership])).rows.map((row) => row.id);
-      return { actor, products };
+      return { actor, partnership, products };
     };
     const first = await setup(a); const second = await setup(b);
     actorA = first.actor; actorB = second.actor;
+    partnershipA = first.partnership;
     [productA, productA2, ineligible] = first.products; hidden = second.products[0];
   });
   afterAll(async () => {
@@ -74,6 +75,30 @@ describe('Production queue PostgreSQL isolation, constraints and atomic reorder'
     expect(audit).toHaveLength(1); expect(audit[0]).toMatchObject({ revision: 1, actor_user_id: actorA, new_order: input.productIds, reason: input.reason });
     expect(await repository.listProductionQueueAudit(b)).toEqual([]);
     await expect(repository.reorderProductionQueue(a, actorA, input)).rejects.toBeInstanceOf(ProductionQueueConflict);
+  });
+  it('does not deadlock interaction FK checks against a concurrent reorder', async () => {
+    const blocker = await pool.connect();
+    try {
+      await blocker.query('BEGIN');
+      await blocker.query("SET LOCAL lock_timeout = '1500ms'");
+      await blocker.query('SELECT id FROM ccos_products WHERE workspace_id = $1 AND id = $2 FOR SHARE', [a, productA]);
+      const before = await repository.getProductionQueue(a);
+      const reorder = repository.reorderProductionQueue(a, actorA, {
+        expectedRevision: before.revision,
+        membershipToken: before.membershipToken,
+        productIds: before.eligibleIds,
+        reason: 'Concurrent interaction regression',
+      });
+      // Give reorder time to acquire the workspace lock and block on this product.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await blocker.query(`INSERT INTO ccos_interactions(workspace_id, partnership_id, direction, channel, summary, occurred_at)
+        VALUES ($1, $2, 'inbound', 'email', 'Concurrent queue check', NOW())`, [a, partnershipA]);
+      await blocker.query('COMMIT');
+      await expect(reorder).resolves.toMatchObject({ revision: before.revision + 1 });
+    } finally {
+      await blocker.query('ROLLBACK').catch(() => undefined);
+      blocker.release();
+    }
   });
   it('detects eligible lifecycle membership changes, prunes departed products and leaves statuses untouched', async () => {
     const before = await repository.getProductionQueue(a);

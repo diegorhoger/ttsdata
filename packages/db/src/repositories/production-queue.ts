@@ -71,7 +71,9 @@ export class CCOSProductionQueueRepository {
     try {
       await client.query('BEGIN');
       // Workspace lock serializes initialization and reorder; eligible row locks also serialize lifecycle transitions.
-      const workspace = await client.query('SELECT id FROM workspaces WHERE id = $1 FOR UPDATE', [workspaceId]);
+      // NO KEY UPDATE serializes reorders while remaining compatible with FK KEY SHARE.
+      // This avoids lock inversion with interaction creation, which locks a product first.
+      const workspace = await client.query('SELECT id FROM workspaces WHERE id = $1 FOR NO KEY UPDATE', [workspaceId]);
       if (!workspace.rowCount) throw new ProductionQueueValidationError('Workspace not found');
       const actor = await client.query('SELECT id FROM users WHERE workspace_id = $1 AND id = $2', [workspaceId, actorUserId]);
       if (!actor.rowCount) throw new ProductionQueueValidationError('Actor not found');
