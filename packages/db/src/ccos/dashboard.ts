@@ -30,12 +30,13 @@ export function buildDashboard(domain: DashboardDomain, asOf: Date) {
   });
   const sections = {
     overdueActions: attention.filter((item) => item.overdue),
-    overdueReplies: attention.filter((item) => item.overdue && /reply|respond|response|contact|follow[ -]up/i.test(`${item.ruleKey ?? ''} ${item.title}`)),
+    overdueReplies: attention.filter((item) => item.overdue
+      && /reply|respond|responder|response|contact|contato|follow(?:[ _-]?up)?/i.test(`${item.ruleKey ?? ''} ${item.title}`)),
     receivedProducts: domain.products.filter((item) => item.status === 'received'),
     awaitingPublication: domain.contents.filter((item) => ['ready', 'scheduled'].includes(item.status)),
     awaitingAdAuthorization: domain.contents.filter((item) => ['published', 'ads_authorized', 'monitoring'].includes(item.status)
       && (item.adAuthorizationStatus !== 'authorized' || !item.adAuthorizationCode || (item.adAuthorizationExpiresAt !== null && item.adAuthorizationExpiresAt <= asOf))),
-    followUp: attention.filter((item) => /follow|repeat|replenish|replacement|stock/i.test(`${item.ruleKey ?? ''} ${item.title}`)),
+    followUp: attention.filter((item) => /follow|repeat|replenish|replacement|stock|repor|reposi/i.test(`${item.ruleKey ?? ''} ${item.title}`)),
   };
   return { ...domain, asOf, attention, activePartnerships, sections, counts: {
     brands: domain.stores.length, partnerships: domain.partnerships.length, activePartnerships: activePartnerships.length,

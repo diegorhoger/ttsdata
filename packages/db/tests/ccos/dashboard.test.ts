@@ -27,11 +27,13 @@ describe('canonical dashboard projection', () => {
       status: 'open', dueAt: new Date(now.getTime() - 1), waitingReason: null,
     })) as DashboardDomain['nextActions'];
     domain.nextActions.push({ ...domain.nextActions[0], id: 'waiting', status: 'waiting', waitingReason: 'Awaiting sample' },
-      { ...domain.nextActions[0], id: 'done', status: 'completed' });
+      { ...domain.nextActions[0], id: 'done', status: 'completed' },
+      { ...domain.nextActions[0], id: 'manual-follow-up', title: 'Responder à marca', ruleKey: 'opportunity.manual-v1.follow_up' });
     const dashboard = buildDashboard(domain, now);
-    expect(dashboard.attention).toHaveLength(6);
+    expect(dashboard.attention).toHaveLength(7);
     expect(dashboard.attention.every((item) => item.partnershipIds.includes('p'))).toBe(true);
-    expect(dashboard.counts.overdueReplies).toBe(5);
+    expect(dashboard.counts.overdueReplies).toBe(6);
+    expect(dashboard.sections.followUp.map((item) => item.id)).toContain('manual-follow-up');
     expect(dashboard.counts.receivedProducts).toBe(1);
     expect(dashboard.counts.awaitingPublication).toBe(1);
     expect(dashboard.activePartnerships).toHaveLength(2);

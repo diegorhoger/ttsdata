@@ -12,6 +12,7 @@ const inputClass = 'mt-1 w-full rounded-lg border border-slate-300 bg-white px-3
 export default function OperatorPage() {
   const [data, setData] = useState<Data | null>(null); const [operation, setOperation] = useState<Operation>('store');
   const [selected, setSelected] = useState(''); const [source, setSource] = useState<{ type: string; id: string } | null>(null);
+  const [fetchedSource, setFetchedSource] = useState<RecordItem | null>(null);
   const [error, setError] = useState(''); const [message, setMessage] = useState(''); const [busy, setBusy] = useState(false);
   const load = useCallback(async () => {
     const response = await fetch('/backend/ccos/dashboard', { credentials: 'include', cache: 'no-store' });
@@ -24,12 +25,25 @@ export default function OperatorPage() {
     if (type && id) { setSource({ type, id }); setSelected(id); if (type === 'product' || type === 'content' || type === 'partnership') setOperation(`${type}Status`); }
     load().catch((reason) => setError(reason.message));
   }, [load]);
+  useEffect(() => {
+    setFetchedSource(null);
+    if (!source || !['action', 'template_version'].includes(source.type)) return;
+    const path = source.type === 'action' ? `next-actions/${source.id}` : `templates/${source.id}`;
+    fetch(`/backend/ccos/${path}`, { credentials: 'include', cache: 'no-store' })
+      .then(async (response) => {
+        if (response.status === 401) { window.location.assign('/login'); return; }
+        if (!response.ok) throw new Error('Origem não encontrada neste workspace.');
+        const body = await response.json();
+        setFetchedSource(body.nextAction ?? body.templateVersion ?? body);
+      })
+      .catch((reason) => setError(reason instanceof Error ? reason.message : 'Falha ao carregar origem.'));
+  }, [source]);
   const options = !data ? [] : operation === 'partnership' ? data.stores : ['product', 'partnershipStatus', 'action'].includes(operation) ? data.partnerships
     : ['content', 'productStatus'].includes(operation) ? data.products : ['contentStatus', 'performance'].includes(operation) ? data.contents : [];
   const current = options.find((item) => item.id === selected);
   const transitionMap = operation === 'productStatus' ? productTransitions : operation === 'contentStatus' ? contentTransitions : partnershipTransitions;
   const transitions = operation.endsWith('Status') ? transitionMap[current?.status ?? ''] ?? [] : [];
-  const sourceRecord = !data || !source ? null : (source.type === 'store' ? data.stores : source.type === 'partnership' ? data.partnerships : source.type === 'product' ? data.products : source.type === 'content' ? data.contents : data.attention).find((item) => item.id === source.id);
+  const sourceRecord = fetchedSource ?? (!data || !source ? null : (source.type === 'store' ? data.stores : source.type === 'partnership' ? data.partnerships : source.type === 'product' ? data.products : source.type === 'content' ? data.contents : data.attention).find((item) => item.id === source.id));
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const formElement = event.currentTarget; const form = new FormData(formElement);

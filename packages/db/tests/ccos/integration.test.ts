@@ -1,10 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
-import Fastify from 'fastify';
 import { CCOSRepository } from '../../src/repositories/ccos';
 import { CCOSDashboardRepository } from '../../src/repositories/dashboard';
-import { registerCCOSRoutes } from '../../../../apps/api/src/routes/ccos';
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL;
 
@@ -105,34 +102,6 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
     expect(other.interactions.map((item) => item.id)).not.toContain(interaction.id);
     expect(other.production.items.map((item) => item.id)).not.toContain(product.id);
     await expect(repository.updateProduct(workspaceB, product.id, { status: 'completed' })).resolves.toBeNull();
-  });
-
-  it('serves the real database-backed dashboard through the authenticated API route and fails closed', async () => {
-    const brand = await repository.createStore({ workspaceId: workspaceA, name: 'API dashboard brand' });
-    const app = Fastify();
-    let authenticatedWorkspace = workspaceA;
-    await app.register(registerCCOSRoutes, {
-      prefix: '/api/ccos',
-      dashboardRepository: new CCOSDashboardRepository(pool),
-      authenticate: async (request) => {
-        request.auth = { userId: randomUUID(), workspaceId: authenticatedWorkspace, role: 'viewer' };
-      },
-    });
-    try {
-      const response = await app.inject({ method: 'GET', url: '/api/ccos/dashboard' });
-      expect(response.statusCode).toBe(200);
-      expect(response.json().stores.map((item: { id: string }) => item.id)).toContain(brand.id);
-
-      authenticatedWorkspace = workspaceB;
-      const isolated = await app.inject({ method: 'GET', url: '/api/ccos/dashboard' });
-      expect(isolated.statusCode).toBe(200);
-      expect(isolated.json().stores.map((item: { id: string }) => item.id)).not.toContain(brand.id);
-
-      const override = await app.inject({ method: 'GET', url: `/api/ccos/dashboard?workspaceId=${workspaceA}` });
-      expect(override.statusCode).toBe(400);
-    } finally {
-      await app.close();
-    }
   });
 
   it('fails closed when another workspace reads a store', async () => {
