@@ -1,24 +1,18 @@
 "use client";
 
-import { useEffect } from "react";
+import { FormEvent, useState } from "react";
+import { AuthShell, Field } from "../../components/auth-form";
 
-/**
- * Register page — redirects to TikTok OAuth flow.
- * Account is created automatically after first TikTok authorization.
- */
 export default function RegisterPage() {
-  useEffect(() => {
-    // Redirect to TikTok connect flow
-    window.location.href = "/connect";
-  }, []);
-
-  return (
-    <div className="mx-auto max-w-2xl px-4 py-16 text-center">
-      <div className="animate-pulse space-y-4">
-        <div className="h-8 w-64 bg-slate-200 rounded mx-auto"></div>
-        <div className="h-4 w-48 bg-slate-100 rounded mx-auto"></div>
-        <p className="text-slate-500">Redirecionando para o TikTok...</p>
-      </div>
-    </div>
-  );
+  const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setBusy(true); setError(""); const data = new FormData(event.currentTarget);
+    try {
+      const response = await fetch('/backend/auth/register', { method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: data.get('email'), password: data.get('password'), displayName: data.get('displayName') }) });
+      if (response.ok) window.location.assign('/ccos');
+      else { const body = await response.json().catch(() => ({})); setError(body.message ?? 'Não foi possível criar a conta.'); }
+    } catch { setError('Falha de conexão. Tente novamente.'); }
+    finally { setBusy(false); }
+  }
+  return <AuthShell title="Criar workspace" subtitle="Comece a organizar parcerias, produtos e conteúdo agora."><form onSubmit={submit} className="space-y-4"><Field name="displayName" label="Nome do workspace" /><Field name="email" label="E-mail" type="email" /><Field name="password" label="Senha (mínimo 8 caracteres)" type="password" />{error && <p role="alert" className="text-sm text-red-600">{error}</p>}<button disabled={busy} className="w-full rounded-lg bg-sky-600 px-4 py-3 font-semibold text-white disabled:opacity-50">{busy ? 'Criando…' : 'Criar conta'}</button></form></AuthShell>;
 }
