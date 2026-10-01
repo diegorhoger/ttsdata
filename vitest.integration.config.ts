@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 
 export default defineConfig({
   test: {
-    include: ['packages/db/tests/**/integration.test.ts'],
+    include: ['packages/db/tests/**/integration.test.ts', 'apps/api/tests/**/*.integration.test.ts'],
     environment: 'node',
     globals: true,
     fileParallelism: false,
