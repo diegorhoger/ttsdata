@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS ai_audit;
+DROP TABLE IF EXISTS ai_usage_ledger;
+DROP FUNCTION IF EXISTS ai_immutable();
+DROP TABLE IF EXISTS ai_reservations;
+DROP TABLE IF EXISTS ai_consents;
+DROP TABLE IF EXISTS ai_keys;
+DROP TABLE IF EXISTS ai_user_controls;
+DROP TABLE IF EXISTS ai_global_controls;
+DROP TABLE IF EXISTS ai_tenant_controls;

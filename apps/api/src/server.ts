@@ -24,6 +24,7 @@ import { registerMyPerformanceRoutes } from './routes/myPerformance';
 import { registerReferralRoutes } from './routes/referrals';
 import { registerHealthRoutes } from './routes/health';
 import { registerCCOSRoutes } from './routes/ccos';
+import { registerAIRoutes } from './routes/ai';
 import { errorHandler } from './lib/errors';
 
 const PORT = parseInt(process.env.PORT || '4000', 10);
@@ -31,6 +32,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 
 async function buildServer() {
   const app = Fastify({
+    trustProxy: process.env.TRUSTED_PROXY_CIDRS?.split(',').filter(Boolean) ?? false,
     logger: {
       level: process.env.LOG_LEVEL || 'info',
       transport: process.env.NODE_ENV === 'development' 
@@ -106,6 +108,7 @@ async function buildServer() {
 
   // Creator Commerce Operating System
   await app.register(registerCCOSRoutes, { prefix: '/api/ccos' });
+  await app.register(registerAIRoutes, { prefix: '/api/ai' });
 
   return app;
 }
