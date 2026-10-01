@@ -1,6 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
+import Fastify from 'fastify';
 import { CCOSRepository } from '../../src/repositories/ccos';
+import { CCOSDashboardRepository } from '../../src/repositories/dashboard';
+import { registerCCOSRoutes } from '../../../../apps/api/src/routes/ccos';
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL;
 
@@ -33,6 +37,102 @@ describe('CCOS tenant isolation (PostgreSQL)', () => {
       await pool.query('DELETE FROM workspaces WHERE id = ANY($1::uuid[])', [workspaceIds]);
     }
     await pool.end();
+  });
+
+  it('projects the full operational journey and exception path without leaking another tenant', async () => {
+    const dashboard = new CCOSDashboardRepository(pool);
+    const brand = await repository.createStore({ workspaceId: workspaceA, name: 'Dashboard journey brand' });
+    const partnership = await repository.createPartnership({ workspaceId: workspaceA, storeId: brand.id, type: 'gifting' });
+    const product = await repository.createProduct({ workspaceId: workspaceA, partnershipId: partnership.id, name: 'Journey sample' });
+    const read = () => dashboard.getDashboard(workspaceA);
+    let view = await read();
+    expect(view.activePartnerships.find((item) => item.id === partnership.id)?.actions.length).toBeGreaterThan(0);
+    for (const status of ['contacted', 'negotiating', 'active'] as const) {
+      await repository.updatePartnership(workspaceA, partnership.id, { status });
+    }
+    for (const status of ['selected', 'sample_requested', 'sample_approved', 'shipped', 'received'] as const) {
+      await repository.updateProduct(workspaceA, product.id, { status });
+    }
+    view = await read();
+    expect(view.sections.receivedProducts.map((item) => item.id)).toContain(product.id);
+    expect(view.production.items.map((item) => item.id)).toContain(product.id);
+    expect(view.counts.production).toBe(view.production.items.length);
+    const content = await repository.createContent({ workspaceId: workspaceA, productId: product.id, platform: 'manual' });
+    for (const status of ['planned', 'filming', 'editing', 'ready'] as const) {
+      await repository.updateContent(workspaceA, content.id, { status });
+    }
+    expect((await read()).sections.awaitingPublication.map((item) => item.id)).toContain(content.id);
+    await expect(repository.updateContent(workspaceA, content.id, { status: 'published' })).rejects.toThrow('publication');
+    expect((await read()).contents.find((item) => item.id === content.id)?.status).toBe('ready');
+    await repository.updateProduct(workspaceA, product.id, { status: 'content_queue' });
+    await repository.updateProduct(workspaceA, product.id, { status: 'in_production' });
+    expect((await read()).production.items.map((item) => item.id)).not.toContain(product.id);
+    const publishedAt = new Date(Date.now() - 60_000);
+    await repository.updateContent(workspaceA, content.id, {
+      status: 'published', publishedAt, publicationUrl: 'https://example.test/video', adAuthorizationStatus: 'pending',
+    });
+    expect((await read()).sections.awaitingAdAuthorization.map((item) => item.id)).toContain(content.id);
+    await repository.updateContent(workspaceA, content.id, {
+      status: 'ads_authorized', adAuthorizationStatus: 'authorized', adAuthorizationCode: 'manual-code',
+      adAuthorizationCreatedAt: publishedAt, adAuthorizationExpiresAt: new Date(Date.now() + 86_400_000),
+    });
+    await repository.updateContent(workspaceA, content.id, { status: 'monitoring' });
+    const snapshot = await repository.createPerformanceSnapshot({
+      workspaceId: workspaceA, contentId: content.id, observedAt: publishedAt, source: 'manual',
+      metrics: { views: { value: 120, classification: 'self-reported' } },
+    });
+    await repository.updateProduct(workspaceA, product.id, { status: 'content_live' });
+    await repository.updateProduct(workspaceA, product.id, { status: 'monitoring' });
+    await repository.createNextAction({ workspaceId: workspaceA, target: { type: 'product', id: product.id },
+      title: 'Follow up for replenishment', dueAt: publishedAt });
+    const interaction = await repository.createInteraction({ workspaceId: workspaceA, partnershipId: partnership.id,
+      direction: 'inbound', channel: 'manual', summary: 'Repeat sample agreed',
+      sourceLinks: [{ sourceType: 'content', sourceId: content.id }] });
+    view = await read();
+    expect(view.performance.find((item) => item.id === snapshot.id)?.classifications.views).toBe('self-reported');
+    expect(view.performance.find((item) => item.id === snapshot.id)?.clicks).toBeNull();
+    expect(view.sections.awaitingAdAuthorization.map((item) => item.id)).not.toContain(content.id);
+    expect(view.sections.followUp.some((item) => item.target.id === product.id)).toBe(true);
+    expect((await repository.listTimeline(workspaceA, partnership.id)).some((item) => item.id === interaction.id
+      && item.sources.some((source) => source.sourceId === content.id))).toBe(true);
+    const other = await dashboard.getDashboard(workspaceB);
+    expect(other.stores.map((item) => item.id)).not.toContain(brand.id);
+    expect(other.partnerships.map((item) => item.id)).not.toContain(partnership.id);
+    expect(other.products.map((item) => item.id)).not.toContain(product.id);
+    expect(other.contents.map((item) => item.id)).not.toContain(content.id);
+    expect(other.attention.some((item) => item.partnershipIds.includes(partnership.id))).toBe(false);
+    expect(other.performance.map((item) => item.id)).not.toContain(snapshot.id);
+    expect(other.interactions.map((item) => item.id)).not.toContain(interaction.id);
+    expect(other.production.items.map((item) => item.id)).not.toContain(product.id);
+    await expect(repository.updateProduct(workspaceB, product.id, { status: 'completed' })).resolves.toBeNull();
+  });
+
+  it('serves the real database-backed dashboard through the authenticated API route and fails closed', async () => {
+    const brand = await repository.createStore({ workspaceId: workspaceA, name: 'API dashboard brand' });
+    const app = Fastify();
+    let authenticatedWorkspace = workspaceA;
+    await app.register(registerCCOSRoutes, {
+      prefix: '/api/ccos',
+      dashboardRepository: new CCOSDashboardRepository(pool),
+      authenticate: async (request) => {
+        request.auth = { userId: randomUUID(), workspaceId: authenticatedWorkspace, role: 'viewer' };
+      },
+    });
+    try {
+      const response = await app.inject({ method: 'GET', url: '/api/ccos/dashboard' });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().stores.map((item: { id: string }) => item.id)).toContain(brand.id);
+
+      authenticatedWorkspace = workspaceB;
+      const isolated = await app.inject({ method: 'GET', url: '/api/ccos/dashboard' });
+      expect(isolated.statusCode).toBe(200);
+      expect(isolated.json().stores.map((item: { id: string }) => item.id)).not.toContain(brand.id);
+
+      const override = await app.inject({ method: 'GET', url: `/api/ccos/dashboard?workspaceId=${workspaceA}` });
+      expect(override.statusCode).toBe(400);
+    } finally {
+      await app.close();
+    }
   });
 
   it('fails closed when another workspace reads a store', async () => {

@@ -173,6 +173,7 @@ async function buildApp(
   repository: ReturnType<typeof createRepository>,
   role: 'owner' | 'admin' | 'analyst' | 'viewer' = 'owner',
   productionQueueRepository?: CCOSRouteOptions['productionQueueRepository'],
+  dashboardRepository?: CCOSRouteOptions['dashboardRepository'],
 ) {
   const app = Fastify({ logger: false });
   app.setErrorHandler(errorHandler);
@@ -189,6 +190,7 @@ async function buildApp(
     prefix: '/api/ccos',
     repository: repository as CCOSRouteOptions['repository'],
     productionQueueRepository,
+    dashboardRepository,
     authenticate,
   });
   return app;
@@ -198,6 +200,30 @@ const apps: Array<Awaited<ReturnType<typeof buildApp>>> = [];
 
 afterEach(async () => {
   await Promise.all(apps.splice(0).map((app) => app.close()));
+});
+
+describe('CCOS operational dashboard route', () => {
+  it('uses authenticated workspace identity and rejects caller-supplied tenant overrides', async () => {
+    const dashboardRepository = { getDashboard: vi.fn().mockResolvedValue({ counts: { attention: 0 } }) };
+    const app = await buildApp(createRepository(), 'viewer', undefined, dashboardRepository);
+    apps.push(app);
+    const response = await app.inject({ method: 'GET', url: '/api/ccos/dashboard' });
+    expect(response.statusCode).toBe(200);
+    expect(dashboardRepository.getDashboard).toHaveBeenCalledWith(WORKSPACE_ID);
+    const override = await app.inject({ method: 'GET', url: `/api/ccos/dashboard?workspaceId=${STORE_ID}` });
+    expect(override.statusCode).toBe(400);
+    expect(dashboardRepository.getDashboard).toHaveBeenCalledOnce();
+  });
+
+  it('rejects an unauthenticated read before invoking the dashboard repository', async () => {
+    const app = Fastify({ logger: false });
+    app.setErrorHandler(errorHandler);
+    const dashboardRepository = { getDashboard: vi.fn() };
+    await app.register(registerCCOSRoutes, { prefix: '/api/ccos', dashboardRepository });
+    apps.push(app);
+    expect((await app.inject({ method: 'GET', url: '/api/ccos/dashboard' })).statusCode).toBe(401);
+    expect(dashboardRepository.getDashboard).not.toHaveBeenCalled();
+  });
 });
 
 describe('CCOS production queue routes', () => {

@@ -47,3 +47,5 @@ export * from './ccos/production-queue';
 export * from './repositories/production-queue';
 export * from './ccos/opportunities';
 export * from './repositories/opportunities';
+export * from './ccos/dashboard';
+export * from './repositories/dashboard';

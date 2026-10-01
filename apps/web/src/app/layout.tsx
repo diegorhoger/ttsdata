@@ -26,6 +26,7 @@ export default function RootLayout({
               TTSData
             </a>
             <nav className="flex gap-6 text-sm font-medium text-slate-600">
+              <a href="/ccos" className="hover:text-sky-600">Operação</a>
               <a href="/connect" className="hover:text-sky-600">Conectar TikTok</a>
               <a href="/settings" className="hover:text-sky-600">Configurações</a>
             </nav>

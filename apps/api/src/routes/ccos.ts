@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
   CCOSRepository,
+  CCOSDashboardRepository,
   CCOSOpportunityRepository,
   OPPORTUNITY_STATES,
   OPPORTUNITY_ACTIONS,
@@ -411,6 +412,7 @@ function parse<T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, input: unknown): 
 }
 
 export type CCOSRouteOptions = {
+  dashboardRepository?: Pick<CCOSDashboardRepository, 'getDashboard'>;
   repository?: StorePartnershipRepository;
   opportunityRepository?: Pick<CCOSOpportunityRepository, 'getOpportunity' | 'listHistory' | 'changeState' | 'createAction'>;
   productionQueueRepository?: Pick<CCOSProductionQueueRepository, 'getProductionQueue' | 'reorderProductionQueue' | 'listProductionQueueAudit'>;
@@ -422,6 +424,11 @@ export async function registerCCOSRoutes(app: FastifyInstance, options: CCOSRout
   const opportunityRepository = options.opportunityRepository ?? new CCOSOpportunityRepository(pool);
   const productionQueueRepository = options.productionQueueRepository ?? new CCOSProductionQueueRepository(pool);
   const authenticate = options.authenticate ?? requireAuth;
+  const dashboardRepository = options.dashboardRepository ?? new CCOSDashboardRepository(pool);
+  app.get('/dashboard', { preHandler: authenticate }, async (request, reply) => {
+    parse(z.object({}).strict(), request.query);
+    return reply.send(await dashboardRepository.getDashboard(request.auth!.workspaceId));
+  });
   const authorizeWorkspaceWrite = requireRoles('owner', 'admin');
 
   const decisionEvidence = z.record(z.unknown()).refine(isValidOpportunityEvidence, 'Non-empty evidence object required, maximum 20000 jsonb characters');

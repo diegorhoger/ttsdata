@@ -10,7 +10,8 @@ const eligibility = "p.status IN ('received', 'content_queue')";
 export class CCOSProductionQueueRepository {
   constructor(private readonly pool: Pool) {}
 
-  private async read(client: PoolClient, workspaceId: string, options: ProductionQueueOptions = {}) {
+  /** Read on a caller-owned snapshot transaction; never begins or ends that transaction. */
+  async readSnapshot(client: PoolClient, workspaceId: string, options: ProductionQueueOptions = {}) {
     const asOf = options.asOf ?? new Date();
     const state = await client.query('SELECT revision, product_ids FROM ccos_production_queue_state WHERE workspace_id = $1', [workspaceId]);
     const result = await client.query(`
@@ -54,7 +55,7 @@ export class CCOSProductionQueueRepository {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
-      const queue = await this.read(client, workspaceId, options);
+      const queue = await this.readSnapshot(client, workspaceId, options);
       await client.query('COMMIT');
       return queue;
     } catch (error) { await client.query('ROLLBACK'); throw error; }
@@ -80,7 +81,7 @@ export class CCOSProductionQueueRepository {
       await client.query('INSERT INTO ccos_production_queue_state (workspace_id) VALUES ($1) ON CONFLICT DO NOTHING', [workspaceId]);
       await client.query('SELECT revision FROM ccos_production_queue_state WHERE workspace_id = $1 FOR UPDATE', [workspaceId]);
       await client.query(`SELECT p.id FROM ccos_products p WHERE p.workspace_id = $1 AND ${eligibility} ORDER BY p.id FOR UPDATE`, [workspaceId]);
-      const current = await this.read(client, workspaceId);
+      const current = await this.readSnapshot(client, workspaceId);
       if (current.revision !== input.expectedRevision || current.membershipToken !== input.membershipToken) {
         throw new ProductionQueueConflict('Production queue changed; reload before reordering');
       }
@@ -93,7 +94,7 @@ export class CCOSProductionQueueRepository {
       await client.query(`INSERT INTO ccos_production_queue_audit (workspace_id, revision, actor_user_id, previous_order, new_order, reason)
         VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6)`,
       [workspaceId, current.revision + 1, actorUserId, JSON.stringify(current.manualOrder), JSON.stringify(input.productIds), input.reason.trim()]);
-      const queue = await this.read(client, workspaceId);
+      const queue = await this.readSnapshot(client, workspaceId);
       await client.query('COMMIT');
       return queue;
     } catch (error) { await client.query('ROLLBACK'); throw error; }
