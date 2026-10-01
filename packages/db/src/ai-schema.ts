@@ -14,16 +14,16 @@ export const aiUserControls = pgTable('ai_user_controls', {
 }, (t) => ({ identity: uniqueIndex('ai_user_controls_identity_idx').on(t.workspaceId, t.userId), actor: actor('ai_user_controls_actor_fk', t),
   limits: check('ai_user_limits_check', sql`${t.maxConcurrent} BETWEEN 1 AND 10 AND ${t.dailyRequests} BETWEEN 1 AND 10000 AND ${t.dailyTokens} BETWEEN 1 AND 10000000 AND ${t.dailySpendUsd} >= 0`) }));
 export const aiKeys = pgTable('ai_keys', {
-  id: uuid('id').primaryKey().defaultRandom(), workspaceId: workspace(), userId: uuid('user_id').notNull(), mode: text('mode').notNull(), provider: text('provider').notNull().default('openrouter'),
+  id: uuid('id').primaryKey().defaultRandom(), workspaceId: workspace(), userId: uuid('user_id').notNull(), mode: text('mode').notNull(), provider: text('provider').notNull(),
   encryptedKey: text('encrypted_key').notNull(), encryptionVersion: integer('encryption_version').notNull(), fingerprint: text('fingerprint').notNull(), enabled: boolean('enabled').notNull().default(true), revision: integer('revision').notNull().default(1),
   validatedAt: date('validated_at'), expiresAt: date('expires_at'), createdAt: date('created_at').notNull().defaultNow(), updatedAt: date('updated_at').notNull().defaultNow(),
-}, (t) => ({ identityMode: uniqueIndex('ai_keys_identity_mode_idx').on(t.workspaceId, t.userId, t.mode), identityId: uniqueIndex('ai_keys_identity_id_idx').on(t.workspaceId, t.userId, t.id), actor: actor('ai_keys_actor_fk', t),
-  shape: check('ai_keys_shape_check', sql`${t.mode} IN ('byok','platform') AND ${t.provider} = 'openrouter' AND length(${t.encryptedKey}) > 32 AND ${t.encryptionVersion} > 0 AND ${t.revision} > 0 AND ${t.fingerprint} LIKE 'sha256:%'`) }));
+}, (t) => ({ identityMode: uniqueIndex('ai_keys_identity_mode_idx').on(t.workspaceId, t.userId, t.mode, t.provider), identityId: uniqueIndex('ai_keys_identity_id_idx').on(t.workspaceId, t.userId, t.id), actor: actor('ai_keys_actor_fk', t),
+  shape: check('ai_keys_shape_check', sql`${t.mode} IN ('byok','platform') AND ${t.provider} ~ '^[a-z][a-z0-9_-]{0,63}$' AND length(${t.encryptedKey}) > 32 AND ${t.encryptionVersion} > 0 AND ${t.revision} > 0 AND ${t.fingerprint} LIKE 'sha256:%'`) }));
 export const aiConsents = pgTable('ai_consents', {
   workspaceId: workspace(), userId: uuid('user_id').notNull(), version: text('version').notNull(), requireZdr: boolean('require_zdr').notNull().default(true), acceptedAt: date('accepted_at').notNull().defaultNow(),
 }, (t) => ({ identity: uniqueIndex('ai_consents_identity_idx').on(t.workspaceId, t.userId), actor: actor('ai_consents_actor_fk', t) }));
 export const aiReservations = pgTable('ai_reservations', {
-  id: uuid('id').primaryKey(), workspaceId: workspace(), userId: uuid('user_id').notNull(), mode: text('mode').notNull(), model: text('model').notNull(), status: text('status').notNull().default('pending'),
+  id: uuid('id').primaryKey(), workspaceId: workspace(), userId: uuid('user_id').notNull(), mode: text('mode').notNull(), provider: text('provider').notNull(), model: text('model').notNull(), status: text('status').notNull().default('pending'),
   reservedRequests: integer('reserved_requests').notNull(), reservedTokens: count('reserved_tokens').notNull(), reservedUsd: amount('reserved_usd').notNull(), chargedTokens: count('charged_tokens'), chargedUsd: amount('charged_usd'),
   expiresAt: date('expires_at').notNull(), createdAt: date('created_at').notNull().defaultNow(),
 }, (t) => ({ identityId: uniqueIndex('ai_reservations_identity_id_idx').on(t.workspaceId, t.userId, t.id), userTime: index('ai_reservations_user_time_idx').on(t.workspaceId, t.userId, t.createdAt), actor: actor('ai_reservations_actor_fk', t),
@@ -38,3 +38,10 @@ export const aiUsageLedger = pgTable('ai_usage_ledger', {
 export const aiAudit = pgTable('ai_audit', {
   id: uuid('id').primaryKey().defaultRandom(), workspaceId: workspace(), userId: uuid('user_id').notNull(), action: text('action').notNull(), targetId: uuid('target_id'), metadata: jsonb('metadata').notNull().default({}), createdAt: date('created_at').notNull().defaultNow(),
 }, (t) => ({ actor: actor('ai_audit_actor_fk', t), shape: check('ai_audit_shape_check', sql`jsonb_typeof(${t.metadata}) = 'object' AND NOT (${t.metadata} ?| ARRAY['apiKey','key','prompt','output','reasoning','token'])`) }));
+export const aiDispatchLeases = pgTable('ai_dispatch_leases', {
+  id: uuid('id').primaryKey(), workspaceId: workspace(), userId: uuid('user_id').notNull(), requestId: uuid('request_id').notNull(),
+  attempt: integer('attempt').notNull(), provider: text('provider').notNull(), mode: text('mode').notNull(), keyId: uuid('key_id').notNull(),
+  keyRevision: integer('key_revision').notNull(), authorizedAt: date('authorized_at').notNull().defaultNow(),
+}, (t) => ({ attemptUnique: uniqueIndex('ai_dispatch_request_attempt_idx').on(t.requestId, t.attempt), actor: actor('ai_dispatch_actor_fk', t),
+  reservation: foreignKey({ name: 'ai_dispatch_reservation_fk', columns: [t.workspaceId, t.userId, t.requestId], foreignColumns: [aiReservations.workspaceId, aiReservations.userId, aiReservations.id] }).onDelete('cascade'),
+  shape: check('ai_dispatch_shape_check', sql`${t.attempt} BETWEEN 1 AND 3 AND ${t.keyRevision} > 0 AND ${t.provider} ~ '^[a-z][a-z0-9_-]{0,63}$' AND ${t.mode} IN ('byok','platform')`) }));

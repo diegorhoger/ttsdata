@@ -6,7 +6,7 @@ import { AIError, FakeAIProvider, AI_DISCLOSURE_VERSION } from '../../packages/s
 const tenant = '11111111-1111-4111-8111-111111111111'; const user = '22222222-2222-4222-8222-222222222222';
 const apps: ReturnType<typeof Fastify>[] = [];
 afterEach(async () => { await Promise.all(apps.splice(0).map((app) => app.close())); });
-function repository() { return { listKeys: vi.fn().mockResolvedValue([]), putKey: vi.fn().mockResolvedValue({ fingerprint: 'sha256:masked…' }), credential: vi.fn().mockResolvedValue({ key: 'private-credential', id: 'key', revision: 1 }), changeKey: vi.fn().mockResolvedValue(true), consent: vi.fn(), configure: vi.fn(), configureTenant: vi.fn(), ledger: vi.fn().mockResolvedValue([]) }; }
+function repository() { return { listKeys: vi.fn().mockResolvedValue([]), putKey: vi.fn().mockResolvedValue({ fingerprint: 'sha256:masked…' }), credential: vi.fn().mockResolvedValue({ key: 'private-credential', id: 'key', revision: 1 }), changeKey: vi.fn().mockResolvedValue(true), consent: vi.fn(), withdrawConsent: vi.fn(), configure: vi.fn(), configureTenant: vi.fn(), ledger: vi.fn().mockResolvedValue([]) }; }
 async function app(options: AIRouteOptions = {}, authenticated = true) {
   const server = Fastify({ logger: false }); server.setErrorHandler(errorHandler); apps.push(server);
   server.get('/non-ai', async () => { throw new AppError('deterministic error', 418, 'NON_AI'); });
@@ -30,12 +30,12 @@ describe('AI API security boundary', () => {
     const store = repository(); const server = await app({ repository: store, provider: new FakeAIProvider(), allowInsecureForTests: true });
     const response = await server.inject({ method: 'PUT', url: '/api/ai/keys/byok', payload: { key: 'private-credential' } });
     expect(response.statusCode).toBe(200); expect(response.body).not.toContain('private-credential');
-    expect(store.putKey).toHaveBeenCalledWith({ workspaceId: tenant, userId: user }, 'byok', 'private-credential', true);
+    expect(store.putKey).toHaveBeenCalledWith({ workspaceId: tenant, userId: user }, 'byok', 'fake', 'private-credential', true);
     expect((await server.inject({ method: 'PUT', url: '/api/ai/keys/byok', payload: { key: 'private-credential', workspaceId: 'other' } })).statusCode).toBe(400);
   });
   it('user BYOK routes cannot mutate platform keys', async () => {
     const store = repository(); const server = await app({ repository: store });
-    await server.inject({ method: 'POST', url: '/api/ai/keys/byok/delete' }); expect(store.changeKey).toHaveBeenCalledWith({ workspaceId: tenant, userId: user }, 'byok', 'delete');
+    await server.inject({ method: 'POST', url: '/api/ai/keys/byok/delete' }); expect(store.changeKey).toHaveBeenCalledWith({ workspaceId: tenant, userId: user }, 'byok', 'openrouter', 'delete');
     expect((await server.inject({ method: 'POST', url: '/api/ai/keys/platform/delete' })).statusCode).toBe(404);
   });
   it('generation rejects extra input/tenant/fallback fields and returns stable sanitized errors', async () => {
@@ -47,5 +47,13 @@ describe('AI API security boundary', () => {
   });
   it('plugin-local error handler leaves deterministic route behavior unchanged', async () => {
     const server = await app(); const response = await server.inject('/non-ai'); expect(response.statusCode).toBe(418); expect(response.json().error).toBe('NON_AI');
+  });
+  it('withdraws consent only for the authenticated user and requires authentication', async () => {
+    const store = repository(); const server = await app({ repository: store });
+    expect((await server.inject({ method: 'DELETE', url: '/api/ai/consent' })).json()).toEqual({ withdrawn: true });
+    expect(store.withdrawConsent).toHaveBeenCalledWith({ workspaceId: tenant, userId: user });
+    const anonymous = await app({ repository: store }, false);
+    expect((await anonymous.inject({ method: 'DELETE', url: '/api/ai/consent' })).statusCode).toBe(401);
+    expect(store.withdrawConsent).toHaveBeenCalledOnce();
   });
 });

@@ -13,13 +13,14 @@ async function main() {
   try {
     const repository = new AIRepository(pool, cipher); const identity = { workspaceId, userId };
     const key = process.env.AI_PLATFORM_OPENROUTER_KEY;
+    const provider = new OpenRouterProvider();
     const operation = process.env.AI_PLATFORM_OPERATION ?? 'replace';
     if (!['replace', 'disable', 'delete'].includes(operation)) throw new Error();
-    if (operation === 'disable' || operation === 'delete') await repository.changeKey(identity, 'platform', operation);
+    if (operation === 'disable' || operation === 'delete') await repository.changeKey(identity, 'platform', provider.id, operation);
     else if (key) {
-      const validation = await new OpenRouterProvider().validateKey(key, AbortSignal.timeout(10000));
+      const validation = await provider.validateKey(key, AbortSignal.timeout(10000));
       if (validation.state !== 'valid') throw new Error();
-      await repository.putKey(identity, 'platform', key, true);
+      await repository.putKey(identity, 'platform', provider.id, key, true);
     }
     await repository.configureTenant(identity, process.env.AI_ENABLE_TENANT === 'true');
     await repository.configure(identity, process.env.AI_ENABLE_USER === 'true');

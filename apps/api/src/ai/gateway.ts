@@ -1,7 +1,7 @@
 import { AIError, AI_DISCLOSURE_VERSION, AI_PROMPT_VERSION, AI_SCHEMA_VERSION, AI_SUMMARY_SCHEMA, matchesSchema, type AIKeyMode, type AIProvider, type AIResult } from '@ttsdata/shared';
 import type { AIIdentity, AIRepository } from '@ttsdata/db';
 
-export type AIGatewayStore = Pick<AIRepository, 'assertEnabled' | 'getConsent' | 'minimumInput' | 'credential' | 'reserve' | 'finalize'>;
+export type AIGatewayStore = Pick<AIRepository, 'assertEnabled' | 'getConsent' | 'minimumInput' | 'credential' | 'reserve' | 'authorizeDispatch' | 'finalize'>;
 export type GenerateInput = { correlationId: string; contentId: string; model: string; mode: AIKeyMode; maxOutputTokens: number; signal?: AbortSignal };
 const instruction = 'Summarize only the supplied authorized performance metrics. Null means unavailable, never zero. Do not claim causation, reveal hidden reasoning, or include chain-of-thought. Return concise summary and at most five practical recommendations using the supplied JSON schema.';
 const units = (value: string) => { const [integer, fraction = ''] = value.split('.'); return BigInt(integer) * 1_000_000_000_000n + BigInt(fraction.padEnd(12, '0')); };
@@ -26,7 +26,7 @@ export class AIGateway {
       checkAbort(); await this.store.assertEnabled(identity, input.mode);
       const consent = await this.store.getConsent(identity); if (consent?.version !== AI_DISCLOSURE_VERSION) throw new AIError('CONSENT_REQUIRED');
       const minimumInput = await this.store.minimumInput(identity, input.contentId);
-      const credential = await this.store.credential(identity, input.mode);
+      const credential = await this.store.credential(identity, input.mode, this.provider.id);
       breakerKey = `${identity.workspaceId}:${identity.userId}:${credential.id}:${credential.revision}`;
       const breaker = this.breakers.get(breakerKey); if (breaker && breaker.until > this.now()) throw new AIError('CIRCUIT_OPEN');
       checkAbort(); const models = await this.provider.models(controller.signal); checkAbort();
@@ -36,16 +36,18 @@ export class AIGateway {
       const estimatedTokens = inputTokens + input.maxOutputTokens;
       const estimate = units(model.inputUsdPerToken) * BigInt(inputTokens) + units(model.outputUsdPerToken) * BigInt(input.maxOutputTokens) + units(model.requestUsd);
       // Reserve every possible attempt up front. Failure/unknown usage is charged conservatively, not zero.
-      await this.store.reserve(identity, { id: input.correlationId, model: input.model, mode: input.mode, requests: 3, tokens: estimatedTokens * 3, costUsd: usd(estimate * 3n) }); reserved = true;
+      await this.store.reserve(identity, { id: input.correlationId, model: input.model, mode: input.mode, provider: this.provider.id, requests: 3, tokens: estimatedTokens * 3, costUsd: usd(estimate * 3n) }); reserved = true;
       for (let attempt = 0; attempt < 3; attempt++) {
-        checkAbort(); if (!this.enabled()) throw new AIError('DISABLED'); await this.store.assertEnabled(identity, input.mode);
-        const current = await this.store.credential(identity, input.mode);
-        if (current.id !== credential.id || current.revision !== credential.revision) throw new AIError('KEY_DISABLED');
+        checkAbort(); if (!this.enabled()) throw new AIError('DISABLED');
+        // The committed one-shot lease, not earlier advisory reads, authorizes this attempt.
+        const authorization = await this.store.authorizeDispatch(identity, { requestId: input.correlationId, attempt: attempt + 1,
+          mode: input.mode, model: input.model, provider: this.provider.id, keyId: credential.id, keyRevision: credential.revision });
+        checkAbort(); if (!this.enabled()) throw new AIError('DISABLED');
         attempts++;
         try {
           result = await this.provider.generate({ correlationId: input.correlationId, model: input.model, promptVersion: AI_PROMPT_VERSION,
             schemaVersion: AI_SCHEMA_VERSION, schema: AI_SUMMARY_SCHEMA, instruction, input: minimumInput, maxOutputTokens: input.maxOutputTokens,
-            requireZdr: consent.requireZdr, signal: controller.signal }, current.key);
+            requireZdr: authorization.requireZdr, signal: controller.signal }, authorization.key);
           checkAbort(); break;
         } catch (error) {
           const safe = error instanceof AIError ? error : new AIError('PROVIDER_UNAVAILABLE');

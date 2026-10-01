@@ -78,6 +78,13 @@
       "when": 1790894245051,
       "tag": "0010_ai_gateway",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790895326493,
+      "tag": "0011_ai_dispatch_authorization",
+      "breakpoints": true
     }
   ]
 }
