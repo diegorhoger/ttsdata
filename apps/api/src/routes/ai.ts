@@ -9,7 +9,7 @@ import { AppError } from '../lib/errors';
 import { AIGateway } from '../ai/gateway';
 import { OpenRouterProvider } from '../ai/openrouter';
 
-type AIRouteStore = Pick<AIRepository, 'listKeys' | 'putKey' | 'credential' | 'changeKey' | 'consent' | 'configure' | 'configureTenant' | 'ledger'>;
+type AIRouteStore = Pick<AIRepository, 'listKeys' | 'putKey' | 'credential' | 'changeKey' | 'consent' | 'withdrawConsent' | 'configure' | 'configureTenant' | 'ledger'>;
 export type AIRouteOptions = { repository?: AIRouteStore; provider?: AIProvider; gateway?: Pick<AIGateway, 'generate'>; authenticate?: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>; allowInsecureForTests?: boolean };
 const status = (code: string) => code === 'INVALID_REQUEST' ? 400 : code === 'RATE_LIMITED' || code === 'LIMIT_EXCEEDED' ? 429 : code === 'CANCELLED' ? 499 : code === 'TIMEOUT' ? 504 : 409;
 function parse<T>(schema: z.ZodType<T>, value: unknown): T { const result = schema.safeParse(value); if (!result.success) throw new AppError('AI request validation failed', 400, 'INVALID_REQUEST'); return result.data; }
@@ -40,17 +40,18 @@ export async function registerAIRoutes(app: FastifyInstance, options: AIRouteOpt
     const body = parse(z.object({ version: z.literal(AI_DISCLOSURE_VERSION), accepted: z.literal(true), requireZdr: z.boolean().default(true) }).strict(), request.body);
     await store().consent(identity(request), body.requireZdr ?? true); return { accepted: true, version: body.version };
   });
+  app.delete('/consent', { preHandler: auth }, async (request) => { await store().withdrawConsent(identity(request)); return { withdrawn: true }; });
   app.get('/keys', { preHandler: auth }, async (request) => ({ keys: await store().listKeys(identity(request)) }));
   app.put('/keys/byok', { preHandler: [auth, secure] }, async (request) => {
     const body = parse(z.object({ key: z.string().min(16).max(4096).regex(/^\S+$/) }).strict(), request.body);
     const state = await provider.validateKey(body.key, AbortSignal.timeout(10_000)); if (state.state !== 'valid') throw new AIError('OUT_OF_CREDITS');
-    return { key: await store().putKey(identity(request), 'byok', body.key, true) };
+    return { key: await store().putKey(identity(request), 'byok', provider.id, body.key, true) };
   });
   app.post('/keys/byok/validate', { preHandler: [auth, secure] }, async (request) => {
-    const credential = await store().credential(identity(request), 'byok');
+    const credential = await store().credential(identity(request), 'byok', provider.id);
     return await provider.validateKey(credential.key, AbortSignal.timeout(10_000));
   });
-  for (const operation of ['disable', 'delete'] as const) app.post(`/keys/byok/${operation}`, { preHandler: auth }, async (request) => ({ changed: await store().changeKey(identity(request), 'byok', operation) }));
+  for (const operation of ['disable', 'delete'] as const) app.post(`/keys/byok/${operation}`, { preHandler: auth }, async (request) => ({ changed: await store().changeKey(identity(request), 'byok', provider.id, operation) }));
   app.put('/controls', { preHandler: [auth, requireRoles('owner', 'admin')] }, async (request) => {
     const body = parse(z.object({ enabled: z.boolean() }).strict(), request.body); await store().configure(identity(request), body.enabled); return body;
   });

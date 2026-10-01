@@ -7,7 +7,7 @@ import { Pool } from 'pg';
 
 const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL;
 const CCOS_TABLES = [
-  'ai_global_controls', 'ai_tenant_controls', 'ai_user_controls', 'ai_keys', 'ai_consents', 'ai_reservations', 'ai_usage_ledger', 'ai_audit',
+  'ai_global_controls', 'ai_tenant_controls', 'ai_user_controls', 'ai_keys', 'ai_consents', 'ai_reservations', 'ai_usage_ledger', 'ai_audit', 'ai_dispatch_leases',
   'ccos_stores',
   'ccos_partnerships',
   'ccos_products',
@@ -112,6 +112,7 @@ if (!parsedUrl.pathname.slice(1).endsWith('_test')) {
 const packageRoot = resolve(process.cwd());
 const migrationsFolder = resolve(packageRoot, 'drizzle');
 const rollbackPaths = [
+  resolve(migrationsFolder, 'rollback/0011_ai_dispatch_authorization.down.sql'),
   resolve(migrationsFolder, 'rollback/0010_ai_gateway.down.sql'),
   resolve(migrationsFolder, 'rollback/0009_yummy_fantastic_four.down.sql'),
   resolve(migrationsFolder, 'rollback/0008_red_the_santerians.down.sql'),
@@ -159,7 +160,7 @@ async function getMigrationCreatedAt(): Promise<number[]> {
   const journal = JSON.parse(await readFile(journalPath, 'utf8')) as {
     entries?: Array<{ tag?: string; when?: number }>;
   };
-  const tags = ['0002_worried_lyja', '0003_silly_otto_octavius', '0004_brainy_black_bird', '0005_free_human_robot', '0006_nappy_raider', '0007_ccos_performance_snapshots', '0008_red_the_santerians', '0009_yummy_fantastic_four', '0010_ai_gateway'];
+  const tags = ['0002_worried_lyja', '0003_silly_otto_octavius', '0004_brainy_black_bird', '0005_free_human_robot', '0006_nappy_raider', '0007_ccos_performance_snapshots', '0008_red_the_santerians', '0009_yummy_fantastic_four', '0010_ai_gateway', '0011_ai_dispatch_authorization'];
   const entries = tags.map((tag) => journal.entries?.find((entry) => entry.tag === tag));
   if (entries.some((entry) => !entry || typeof entry.when !== 'number')) {
     throw new Error('Migration journal is missing a CCOS migration entry');
@@ -168,10 +169,10 @@ async function getMigrationCreatedAt(): Promise<number[]> {
 }
 
 async function assertForwardSchema(): Promise<void> {
-  const aiChecks = await pool.query('SELECT conname FROM pg_constraint WHERE conname=ANY($1::text[]) AND convalidated', [['ai_global_singleton_check', 'ai_user_limits_check', 'ai_keys_shape_check', 'ai_reservations_shape_check', 'ai_usage_shape_check', 'ai_audit_shape_check']]);
-  if (aiChecks.rowCount !== 6) throw new Error('AI CHECK constraints are missing');
-  const aiTriggers = await pool.query("SELECT 1 FROM pg_trigger WHERE tgname IN ('ai_usage_ledger_immutable','ai_audit_immutable') AND tgenabled='O' AND NOT tgisinternal");
-  if (aiTriggers.rowCount !== 2) throw new Error('AI append-only triggers are missing');
+  const aiChecks = await pool.query('SELECT conname FROM pg_constraint WHERE conname=ANY($1::text[]) AND convalidated', [['ai_global_singleton_check', 'ai_user_limits_check', 'ai_keys_shape_check', 'ai_reservations_shape_check', 'ai_usage_shape_check', 'ai_audit_shape_check', 'ai_dispatch_shape_check']]);
+  if (aiChecks.rowCount !== 7) throw new Error('AI CHECK constraints are missing');
+  const aiTriggers = await pool.query("SELECT 1 FROM pg_trigger WHERE tgname IN ('ai_usage_ledger_immutable','ai_audit_immutable','ai_dispatch_leases_immutable') AND tgenabled='O' AND NOT tgisinternal");
+  if (aiTriggers.rowCount !== 3) throw new Error('AI append-only triggers are missing');
   const opportunityChecks = await pool.query(`SELECT conname FROM pg_constraint WHERE conname = ANY($1::text[]) AND convalidated`, [['ccos_opportunity_states_revision_check', 'ccos_opportunity_history_shape_check']]);
   if (opportunityChecks.rowCount !== 2) throw new Error('Opportunity CHECK constraints are missing');
   const opportunityTrigger = await pool.query("SELECT 1 FROM pg_trigger WHERE tgrelid = 'public.ccos_opportunity_history'::regclass AND tgname = 'ccos_opportunity_history_immutable_trigger' AND tgenabled = 'O' AND NOT tgisinternal");

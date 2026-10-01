@@ -1,13 +1,16 @@
 import { Pool, type PoolClient } from 'pg';
+import { randomUUID } from 'node:crypto';
 import { AIError, AI_DISCLOSURE_VERSION, type AIKeyMode, type AIResult } from '@ttsdata/shared';
 import { AIKeyCipher } from '../ai-crypto';
 
 export type AIIdentity = { workspaceId: string; userId: string };
-export type AIKeyMetadata = { id: string; mode: AIKeyMode; fingerprint: string; enabled: boolean; revision: number; encryptionVersion: number; validatedAt: Date | null; expiresAt: Date | null };
-export type AIReservationInput = { id: string; mode: AIKeyMode; model: string; requests: number; tokens: number; costUsd: string };
+export type AIKeyMetadata = { id: string; mode: AIKeyMode; provider: string; fingerprint: string; enabled: boolean; revision: number; encryptionVersion: number; validatedAt: Date | null; expiresAt: Date | null };
+export type AIReservationInput = { id: string; mode: AIKeyMode; provider: string; model: string; requests: number; tokens: number; costUsd: string };
+export type AIDispatchInput = { requestId: string; attempt: number; mode: AIKeyMode; model: string; provider: string; keyId: string; keyRevision: number };
 export type AIFinalization = { id: string; mode: AIKeyMode; model: string; provider: string; promptVersion: string; schemaVersion: string; attempts: number; latencyMs: number; result?: AIResult; errorCode?: string; unknown: boolean };
-const keyContext = (identity: AIIdentity, mode: AIKeyMode) => `${identity.workspaceId}:${identity.userId}:${mode}:openrouter`;
-const keyColumns = 'id, mode, fingerprint, enabled, revision, encryption_version AS "encryptionVersion", validated_at AS "validatedAt", expires_at AS "expiresAt"';
+const keyContext = (identity: AIIdentity, mode: AIKeyMode, provider: string) => `${identity.workspaceId}:${identity.userId}:${mode}:${provider}`;
+const keyColumns = 'id, mode, provider, fingerprint, enabled, revision, encryption_version AS "encryptionVersion", validated_at AS "validatedAt", expires_at AS "expiresAt"';
+function validateProvider(provider: string) { if (!/^[a-z][a-z0-9_-]{0,63}$/.test(provider)) throw new AIError('INVALID_REQUEST'); }
 
 export class AIRepository {
   constructor(private readonly pool: Pool, private readonly cipher: AIKeyCipher) {}
@@ -25,38 +28,41 @@ export class AIRepository {
     return client.query('INSERT INTO ai_audit(workspace_id,user_id,action,target_id,metadata) VALUES($1,$2,$3,$4,$5::jsonb)',
       [identity.workspaceId, identity.userId, action, targetId ?? null, JSON.stringify(metadata)]);
   }
-  async putKey(identity: AIIdentity, mode: AIKeyMode, raw: string, validated: boolean, expiresAt?: Date): Promise<AIKeyMetadata> {
+  async putKey(identity: AIIdentity, mode: AIKeyMode, provider: string, raw: string, validated: boolean, expiresAt?: Date): Promise<AIKeyMetadata> {
+    validateProvider(provider);
     if (raw.length < 16 || raw.length > 4096 || /\s/.test(raw)) throw new AIError('KEY_INVALID');
-    const encrypted = this.cipher.encrypt(raw, keyContext(identity, mode)); const fingerprint = this.cipher.fingerprint(raw);
+    const encrypted = this.cipher.encrypt(raw, keyContext(identity, mode, provider)); const fingerprint = this.cipher.fingerprint(raw);
     return this.transaction(async (client) => {
       await this.lock(client, identity);
-      const result = await client.query<AIKeyMetadata>(`INSERT INTO ai_keys(workspace_id,user_id,mode,encrypted_key,encryption_version,fingerprint,validated_at,expires_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(workspace_id,user_id,mode)
+      const result = await client.query<AIKeyMetadata>(`INSERT INTO ai_keys(workspace_id,user_id,mode,provider,encrypted_key,encryption_version,fingerprint,validated_at,expires_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(workspace_id,user_id,mode,provider)
         DO UPDATE SET encrypted_key=EXCLUDED.encrypted_key,encryption_version=EXCLUDED.encryption_version,fingerprint=EXCLUDED.fingerprint,
           validated_at=EXCLUDED.validated_at,expires_at=EXCLUDED.expires_at,enabled=true,revision=ai_keys.revision+1,updated_at=now() RETURNING ${keyColumns}`,
-      [identity.workspaceId, identity.userId, mode, encrypted.encrypted, encrypted.version, fingerprint, validated ? new Date() : null, expiresAt ?? null]);
-      await this.audit(client, identity, 'ai.key.replace', result.rows[0].id, { mode, fingerprint, encryptionVersion: encrypted.version });
+      [identity.workspaceId, identity.userId, mode, provider, encrypted.encrypted, encrypted.version, fingerprint, validated ? new Date() : null, expiresAt ?? null]);
+      await this.audit(client, identity, 'ai.key.replace', result.rows[0].id, { mode, provider, fingerprint, encryptionVersion: encrypted.version });
       return result.rows[0];
     });
   }
   async listKeys(identity: AIIdentity) {
     return (await this.pool.query<AIKeyMetadata>(`SELECT ${keyColumns} FROM ai_keys WHERE workspace_id=$1 AND user_id=$2 ORDER BY mode`, [identity.workspaceId, identity.userId])).rows;
   }
-  async credential(identity: AIIdentity, mode: AIKeyMode): Promise<{ key: string; id: string; revision: number }> {
-    const result = await this.pool.query(`SELECT id,revision,encrypted_key,encryption_version,enabled,expires_at,validated_at FROM ai_keys WHERE workspace_id=$1 AND user_id=$2 AND mode=$3`, [identity.workspaceId, identity.userId, mode]);
+  async credential(identity: AIIdentity, mode: AIKeyMode, provider: string): Promise<{ key: string; id: string; revision: number }> {
+    validateProvider(provider);
+    const result = await this.pool.query(`SELECT id,revision,encrypted_key,encryption_version,enabled,expires_at,validated_at FROM ai_keys WHERE workspace_id=$1 AND user_id=$2 AND mode=$3 AND provider=$4`, [identity.workspaceId, identity.userId, mode, provider]);
     const row = result.rows[0]; if (!row) throw new AIError('KEY_MISSING'); if (!row.enabled) throw new AIError('KEY_DISABLED');
     if (!row.validated_at) throw new AIError('KEY_INVALID');
     if (row.expires_at && row.expires_at <= new Date()) throw new AIError('KEY_EXPIRED');
-    try { return { id: row.id, revision: row.revision, key: this.cipher.decrypt(row.encrypted_key, row.encryption_version, keyContext(identity, mode)) }; }
+    try { return { id: row.id, revision: row.revision, key: this.cipher.decrypt(row.encrypted_key, row.encryption_version, keyContext(identity, mode, provider)) }; }
     catch { throw new AIError('KEY_INVALID'); }
   }
-  async changeKey(identity: AIIdentity, mode: AIKeyMode, operation: 'disable' | 'delete') {
+  async changeKey(identity: AIIdentity, mode: AIKeyMode, provider: string, operation: 'disable' | 'delete') {
+    validateProvider(provider);
     return this.transaction(async (client) => {
       await this.lock(client, identity);
       const result = await client.query(operation === 'delete'
-        ? 'DELETE FROM ai_keys WHERE workspace_id=$1 AND user_id=$2 AND mode=$3 RETURNING id'
-        : 'UPDATE ai_keys SET enabled=false,revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND user_id=$2 AND mode=$3 RETURNING id', [identity.workspaceId, identity.userId, mode]);
-      if (result.rowCount) await this.audit(client, identity, `ai.key.${operation}`, result.rows[0].id, { mode });
+        ? 'DELETE FROM ai_keys WHERE workspace_id=$1 AND user_id=$2 AND mode=$3 AND provider=$4 RETURNING id'
+        : 'UPDATE ai_keys SET enabled=false,revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND user_id=$2 AND mode=$3 AND provider=$4 RETURNING id', [identity.workspaceId, identity.userId, mode, provider]);
+      if (result.rowCount) await this.audit(client, identity, `ai.key.${operation}`, result.rows[0].id, { mode, provider });
       return Boolean(result.rowCount);
     });
   }
@@ -70,6 +76,14 @@ export class AIRepository {
   }
   async getConsent(identity: AIIdentity) {
     return (await this.pool.query<{ version: string; requireZdr: boolean }>('SELECT version,require_zdr AS "requireZdr" FROM ai_consents WHERE workspace_id=$1 AND user_id=$2', [identity.workspaceId, identity.userId])).rows[0] ?? null;
+  }
+  async withdrawConsent(identity: AIIdentity) {
+    return this.transaction(async (client) => {
+      await this.lock(client, identity);
+      await client.query('DELETE FROM ai_consents WHERE workspace_id=$1 AND user_id=$2', [identity.workspaceId, identity.userId]);
+      await client.query('UPDATE ai_user_controls SET enabled=false WHERE workspace_id=$1 AND user_id=$2', [identity.workspaceId, identity.userId]);
+      await this.audit(client, identity, 'ai.consent.withdraw');
+    });
   }
   async configure(identity: AIIdentity, enabled: boolean) {
     return this.transaction(async (client) => {
@@ -106,6 +120,7 @@ export class AIRepository {
     return input;
   }
   async reserve(identity: AIIdentity, input: AIReservationInput) {
+    validateProvider(input.provider);
     return this.transaction(async (client) => {
       await this.lock(client, identity);
       const existing = await client.query('SELECT 1 FROM ai_reservations WHERE id=$1', [input.id]);
@@ -124,16 +139,45 @@ export class AIRepository {
       const spend = await client.query('SELECT $1::numeric+$2::numeric>$3::numeric AS exceeded', [usage.spent, input.costUsd, control.daily_spend_usd]);
       if (Number(usage.concurrent) >= control.max_concurrent || Number(usage.requests) + input.requests > control.daily_requests
         || Number(usage.tokens) + input.tokens > Number(control.daily_tokens) || spend.rows[0].exceeded) throw new AIError('LIMIT_EXCEEDED');
-      await client.query(`INSERT INTO ai_reservations(id,workspace_id,user_id,mode,model,reserved_requests,reserved_tokens,reserved_usd,expires_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,now()+interval '2 minutes')`, [input.id, identity.workspaceId, identity.userId, input.mode, input.model, input.requests, input.tokens, input.costUsd]);
-      await this.audit(client, identity, 'ai.request.reserve', input.id, { mode: input.mode, model: input.model });
+      await client.query(`INSERT INTO ai_reservations(id,workspace_id,user_id,mode,provider,model,reserved_requests,reserved_tokens,reserved_usd,expires_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,now()+interval '2 minutes')`, [input.id, identity.workspaceId, identity.userId, input.mode, input.provider, input.model, input.requests, input.tokens, input.costUsd]);
+      await this.audit(client, identity, 'ai.request.reserve', input.id, { mode: input.mode, provider: input.provider, model: input.model });
+    });
+  }
+  /** Commit of this one-shot lease is the dispatch linearization point. No connection survives this method. */
+  async authorizeDispatch(identity: AIIdentity, input: AIDispatchInput): Promise<{ leaseId: string; key: string; requireZdr: boolean }> {
+    validateProvider(input.provider);
+    return this.transaction(async (client) => {
+      await this.lock(client, identity);
+      const controls = await client.query(`SELECT g.enabled AS global_enabled,t.enabled AS tenant_enabled,u.enabled,u.platform_enabled
+        FROM ai_global_controls g JOIN ai_tenant_controls t ON t.workspace_id=$1 JOIN ai_user_controls u ON u.workspace_id=$1 AND u.user_id=$2
+        WHERE g.singleton=true FOR SHARE OF g,t,u`, [identity.workspaceId, identity.userId]);
+      const control = controls.rows[0]; if (!control?.global_enabled || !control.tenant_enabled || !control.enabled || (input.mode === 'platform' && !control.platform_enabled)) throw new AIError('DISABLED');
+      const consent = await client.query('SELECT version,require_zdr FROM ai_consents WHERE workspace_id=$1 AND user_id=$2 FOR SHARE', [identity.workspaceId, identity.userId]);
+      if (consent.rows[0]?.version !== AI_DISCLOSURE_VERSION) throw new AIError('CONSENT_REQUIRED');
+      const reservation = await client.query(`SELECT reserved_requests FROM ai_reservations WHERE workspace_id=$1 AND user_id=$2 AND id=$3
+        AND mode=$4 AND provider=$5 AND model=$6 AND status='pending' AND expires_at>clock_timestamp() FOR UPDATE`,
+      [identity.workspaceId, identity.userId, input.requestId, input.mode, input.provider, input.model]);
+      if (!reservation.rowCount || !Number.isSafeInteger(input.attempt) || input.attempt < 1 || input.attempt > reservation.rows[0].reserved_requests) throw new AIError('INVALID_REQUEST');
+      const prior = await client.query('SELECT count(*) AS attempts FROM ai_dispatch_leases WHERE request_id=$1', [input.requestId]);
+      if (Number(prior.rows[0].attempts) !== input.attempt - 1) throw new AIError('INVALID_REQUEST');
+      const key = await client.query(`SELECT id,revision,enabled,validated_at,expires_at<=clock_timestamp() AS expired,encrypted_key,encryption_version FROM ai_keys
+        WHERE workspace_id=$1 AND user_id=$2 AND mode=$3 AND provider=$4 FOR SHARE`, [identity.workspaceId, identity.userId, input.mode, input.provider]);
+      const current = key.rows[0]; if (!current || !current.enabled || current.id !== input.keyId || current.revision !== input.keyRevision) throw new AIError('KEY_DISABLED');
+      if (!current.validated_at) throw new AIError('KEY_INVALID'); if (current.expired) throw new AIError('KEY_EXPIRED');
+      let credential: string; try { credential = this.cipher.decrypt(current.encrypted_key, current.encryption_version, keyContext(identity, input.mode, input.provider)); } catch { throw new AIError('KEY_INVALID'); }
+      const leaseId = randomUUID();
+      await client.query(`INSERT INTO ai_dispatch_leases(id,workspace_id,user_id,request_id,attempt,provider,mode,key_id,key_revision,authorized_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,clock_timestamp())`, [leaseId, identity.workspaceId, identity.userId, input.requestId, input.attempt, input.provider, input.mode, current.id, current.revision]);
+      await this.audit(client, identity, 'ai.request.authorize', leaseId);
+      return { leaseId, key: credential, requireZdr: consent.rows[0].require_zdr };
     });
   }
   async finalize(identity: AIIdentity, input: AIFinalization) {
     return this.transaction(async (client) => {
       await this.lock(client, identity);
       const reserved = await client.query('SELECT * FROM ai_reservations WHERE workspace_id=$1 AND user_id=$2 AND id=$3 FOR UPDATE', [identity.workspaceId, identity.userId, input.id]);
-      if (!reserved.rowCount || reserved.rows[0].mode !== input.mode || reserved.rows[0].model !== input.model) throw new AIError('INVALID_REQUEST');
+      if (!reserved.rowCount || reserved.rows[0].mode !== input.mode || reserved.rows[0].model !== input.model || reserved.rows[0].provider !== input.provider) throw new AIError('INVALID_REQUEST');
       if (reserved.rows[0].status !== 'pending') return;
       const usage = input.result?.usage; const unknown = input.unknown || (usage !== undefined && usage.costUsd === null);
       const outcome = input.result && !input.errorCode ? 'succeeded' : unknown ? 'unknown' : 'failed';

@@ -5,13 +5,13 @@ const identity = { workspaceId: 'tenant-a', userId: 'user-a' };
 const input = { correlationId: 'request', contentId: 'content', model: 'fake/summary', mode: 'byok' as const, maxOutputTokens: 64 };
 function store() { return { assertEnabled: vi.fn().mockResolvedValue(undefined), getConsent: vi.fn().mockResolvedValue({ version: AI_DISCLOSURE_VERSION, requireZdr: true }),
   minimumInput: vi.fn().mockResolvedValue({ views: 10, clicks: null, orders: 2, conversion: null }), credential: vi.fn().mockResolvedValue({ id: 'key', revision: 1, key: 'private-credential' }),
-  reserve: vi.fn().mockResolvedValue(undefined), finalize: vi.fn().mockResolvedValue(undefined) } satisfies AIGatewayStore; }
+  reserve: vi.fn().mockResolvedValue(undefined), authorizeDispatch: vi.fn().mockResolvedValue({ leaseId: 'lease', key: 'private-credential', requireZdr: true }), finalize: vi.fn().mockResolvedValue(undefined) } satisfies AIGatewayStore; }
 
 describe('provider-neutral gateway', () => {
   it.each(['byok', 'platform'] as const)('runs product services with the fake provider in %s mode', async (mode) => {
     const provider = new FakeAIProvider(); const repository = store(); const result = await new AIGateway(provider, repository, () => true).generate(identity, { ...input, mode });
     expect(result.output).toEqual({ summary: 'Recorded metrics reviewed.', recommendations: [] });
-    expect(repository.credential).toHaveBeenCalledWith(identity, mode);
+    expect(repository.credential).toHaveBeenCalledWith(identity, mode, provider.id);
     expect(repository.reserve.mock.calls[0][1]).toMatchObject({ mode, requests: 3 });
     expect(repository.finalize.mock.calls[0][1]).toMatchObject({ mode, attempts: 1, unknown: false });
     expect(provider.requests[0].input).toEqual({ views: 10, clicks: null, orders: 2, conversion: null });
@@ -69,5 +69,27 @@ describe('provider-neutral gateway', () => {
   it('budget refusals occur before paid inference', async () => {
     const repository = store(); repository.reserve.mockRejectedValue(new AIError('LIMIT_EXCEEDED')); const provider = new FakeAIProvider(); const generate = vi.spyOn(provider, 'generate');
     await expect(new AIGateway(provider, repository, () => true).generate(identity, input)).rejects.toMatchObject({ code: 'LIMIT_EXCEEDED' }); expect(generate).not.toHaveBeenCalled(); expect(repository.finalize).not.toHaveBeenCalled();
+  });
+  it('revocation between advisory preparation and atomic dispatch authorization blocks all inference', async () => {
+    const provider = new FakeAIProvider(); const generate = vi.spyOn(provider, 'generate'); const repository = store();
+    repository.reserve.mockImplementationOnce(async () => { repository.authorizeDispatch.mockRejectedValue(new AIError('KEY_DISABLED')); });
+    await expect(new AIGateway(provider, repository, () => true).generate(identity, input)).rejects.toMatchObject({ code: 'KEY_DISABLED' });
+    expect(generate).not.toHaveBeenCalled(); expect(repository.finalize.mock.calls[0][1]).toMatchObject({ attempts: 0, unknown: false });
+  });
+  it('an attempt authorized before revocation may complete; every retry requires a new authorization', async () => {
+    const provider = new FakeAIProvider(); const generate = vi.spyOn(provider, 'generate'); const repository = store();
+    repository.authorizeDispatch.mockImplementationOnce(async () => { repository.authorizeDispatch.mockRejectedValue(new AIError('KEY_DISABLED')); return { leaseId: 'first', key: 'authorized-key', requireZdr: true }; });
+    await new AIGateway(provider, repository, () => true).generate(identity, input);
+    expect(generate).toHaveBeenCalledOnce(); expect(repository.authorizeDispatch).toHaveBeenCalledOnce();
+    const retryStore = store(); retryStore.authorizeDispatch.mockResolvedValueOnce({ leaseId: 'first', key: 'authorized-key', requireZdr: true }).mockRejectedValue(new AIError('DISABLED'));
+    generate.mockRejectedValueOnce(new AIError('RATE_LIMITED', true, 0));
+    await expect(new AIGateway(provider, retryStore, () => true).generate(identity, input)).rejects.toMatchObject({ code: 'DISABLED' });
+    expect(retryStore.authorizeDispatch).toHaveBeenCalledTimes(2); expect(generate).toHaveBeenCalledTimes(2);
+  });
+  it('consent withdrawal before authorization prevents dispatch even after initial consent passed', async () => {
+    const provider = new FakeAIProvider(); const generate = vi.spyOn(provider, 'generate'); const repository = store();
+    repository.authorizeDispatch.mockRejectedValue(new AIError('CONSENT_REQUIRED'));
+    await expect(new AIGateway(provider, repository, () => true).generate(identity, input)).rejects.toMatchObject({ code: 'CONSENT_REQUIRED' });
+    expect(generate).not.toHaveBeenCalled();
   });
 });
