@@ -49,3 +49,5 @@ export * from './ccos/opportunities';
 export * from './repositories/opportunities';
 export * from './ccos/dashboard';
 export * from './repositories/dashboard';
+export * from './ai-crypto';
+export * from './repositories/ai';
