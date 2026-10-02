@@ -842,3 +842,4 @@ export type CCOSTemplateVersion = typeof ccosTemplateVersions.$inferSelect;
 export type CCOSTemplateUsage = typeof ccosTemplateUsage.$inferSelect;
 export type CCOInteractionSource = typeof ccosInteractionSources.$inferSelect;
 export * from './ai-schema';
+export * from './display-schema';

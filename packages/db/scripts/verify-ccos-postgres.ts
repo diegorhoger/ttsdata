@@ -23,6 +23,12 @@ const CCOS_TABLES = [
   'ccos_production_queue_audit',
   'ccos_opportunity_states',
   'ccos_opportunity_history',
+  'display_capability_controls',
+  'display_connections',
+  'display_sync_jobs',
+  'display_probe_evidence',
+  'display_audit',
+  'display_rate_limits',
 ] as const;
 type ForeignKeyExpectation = {
   name: string;
@@ -98,6 +104,18 @@ const CCOS_FOREIGN_KEYS: ForeignKeyExpectation[] = [
   workspaceForeignKey('ccos_products'),
   tenantForeignKey('ccos_products_workspace_partnership_fk', 'ccos_products', 'partnership_id', 'ccos_partnerships'),
   workspaceForeignKey('ccos_stores'),
+  // Issue #20 — Display capability family (tenant-scoped by workspace + user)
+  workspaceForeignKey('display_connections'),
+  tenantForeignKey('display_connections_actor_fk', 'display_connections', 'user_id', 'users'),
+  workspaceForeignKey('display_sync_jobs'),
+  tenantForeignKey('display_sync_jobs_actor_fk', 'display_sync_jobs', 'user_id', 'users'),
+  tenantForeignKey('display_sync_jobs_connection_fk', 'display_sync_jobs', 'connection_id', 'display_connections'),
+  workspaceForeignKey('display_probe_evidence'),
+  tenantForeignKey('display_probe_evidence_actor_fk', 'display_probe_evidence', 'user_id', 'users'),
+  tenantForeignKey('display_probe_evidence_connection_fk', 'display_probe_evidence', 'connection_id', 'display_connections'),
+  workspaceForeignKey('display_audit'),
+  tenantForeignKey('display_audit_actor_fk', 'display_audit', 'user_id', 'users'),
+  tenantForeignKey('display_audit_connection_fk', 'display_audit', 'connection_id', 'display_connections'),
 ];
 
 if (!TEST_DATABASE_URL) {
@@ -112,6 +130,7 @@ if (!parsedUrl.pathname.slice(1).endsWith('_test')) {
 const packageRoot = resolve(process.cwd());
 const migrationsFolder = resolve(packageRoot, 'drizzle');
 const rollbackPaths = [
+  resolve(migrationsFolder, 'rollback/0012_shiny_wendigo.down.sql'),
   resolve(migrationsFolder, 'rollback/0011_ai_dispatch_authorization.down.sql'),
   resolve(migrationsFolder, 'rollback/0010_ai_gateway.down.sql'),
   resolve(migrationsFolder, 'rollback/0009_yummy_fantastic_four.down.sql'),
@@ -140,6 +159,7 @@ async function runConstraintTests(): Promise<void> {
       'packages/db/tests/opportunities/integration.test.ts',
       'apps/api/tests/ccos-dashboard.integration.test.ts',
       'packages/db/tests/ai/integration.test.ts',
+      'packages/db/tests/display/integration.test.ts',
     ], {
       cwd: resolve(packageRoot, '../..'),
       env: { ...process.env, TEST_DATABASE_URL },
@@ -160,7 +180,7 @@ async function getMigrationCreatedAt(): Promise<number[]> {
   const journal = JSON.parse(await readFile(journalPath, 'utf8')) as {
     entries?: Array<{ tag?: string; when?: number }>;
   };
-  const tags = ['0002_worried_lyja', '0003_silly_otto_octavius', '0004_brainy_black_bird', '0005_free_human_robot', '0006_nappy_raider', '0007_ccos_performance_snapshots', '0008_red_the_santerians', '0009_yummy_fantastic_four', '0010_ai_gateway', '0011_ai_dispatch_authorization'];
+  const tags = ['0002_worried_lyja', '0003_silly_otto_octavius', '0004_brainy_black_bird', '0005_free_human_robot', '0006_nappy_raider', '0007_ccos_performance_snapshots', '0008_red_the_santerians', '0009_yummy_fantastic_four', '0010_ai_gateway', '0011_ai_dispatch_authorization', '0012_shiny_wendigo'];
   const entries = tags.map((tag) => journal.entries?.find((entry) => entry.tag === tag));
   if (entries.some((entry) => !entry || typeof entry.when !== 'number')) {
     throw new Error('Migration journal is missing a CCOS migration entry');
@@ -284,6 +304,41 @@ async function assertForwardSchema(): Promise<void> {
   if (authorizationChecks.rowCount !== 3) {
     throw new Error(`Expected three validated ad authorization checks, found ${authorizationChecks.rowCount ?? 0}`);
   }
+
+  // Issue #20 — Display capability surface
+  const displayChecks = await pool.query<{ conname: string }>(
+    `SELECT conname FROM pg_constraint
+      WHERE conname = ANY($1::text[]) AND contype = 'c' AND convalidated = true`,
+    [['display_capability_singleton_check', 'display_connections_shape_check',
+      'display_connections_lifecycle_check', 'display_sync_jobs_shape_check',
+      'display_probe_evidence_shape_check', 'display_audit_shape_check',
+      'display_rate_limits_shape_check']],
+  );
+  if (displayChecks.rowCount !== 7) throw new Error(`Expected 7 validated Display CHECK constraints, found ${displayChecks.rowCount ?? 0}`);
+
+  const killSwitch = await pool.query<{ enabled: boolean }>(
+    `SELECT enabled FROM display_capability_controls WHERE singleton = true`,
+  );
+  if (killSwitch.rowCount !== 1) throw new Error('Display capability control row is missing');
+  if (killSwitch.rows[0].enabled !== false) throw new Error('Display capability must default to disabled');
+
+  const displayColumns = await pool.query<{ column_name: string }>(
+    `SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'display_connections'
+        AND column_name = ANY($1::text[])`,
+    [['access_token_encrypted', 'access_token_version', 'refresh_token_encrypted', 'refresh_token_version',
+      'access_token_fingerprint', 'refresh_token_fingerprint', 'provider_account_hash', 'authorized_at',
+      'expires_at', 'refresh_expires_at', 'revoked_at', 'disconnected_at', 'revision']],
+  );
+  if (displayColumns.rowCount !== 13) {
+    throw new Error(`Expected 13 Display connection credential/lifecycle columns, found ${displayColumns.rowCount ?? 0}`);
+  }
+  const plaintextColumns = await pool.query<{ column_name: string }>(
+    `SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'display_connections'
+        AND column_name IN ('access_token', 'refresh_token', 'token', 'client_secret')`,
+  );
+  if (plaintextColumns.rowCount !== 0) throw new Error('Display connections expose a plaintext credential column');
 
   const foreignKeys = await pool.query<{
     name: string;

@@ -203,6 +203,58 @@ export class OAuthRepository {
     };
   }
 
+  /**
+   * Atomic single-use consumption inside one transaction.
+   *
+   * The merged implementation already makes consumption atomic through a
+   * conditional UPDATE; this wrapper adds an explicit transaction and row lock so
+   * the failure diagnosis cannot race a concurrent winner. Behaviour is
+   * identical to `consumeState` for callers, including replay detection.
+   */
+  async consumeStateAtomic(rawState: string, sessionId: string): Promise<ConsumeStateResult> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const stateHash = this.hashState(rawState);
+      const sessionHash = this.hashSession(sessionId);
+      const locked = await client.query(
+        `SELECT consumed_at, session_hash, expires_at FROM oauth_states
+          WHERE state_hash = $1 FOR UPDATE`,
+        [stateHash],
+      );
+      if (locked.rows.length === 0) {
+        await client.query('COMMIT');
+        return { success: false, error: 'state_not_found' };
+      }
+      const row = locked.rows[0];
+      if (row.consumed_at) {
+        await client.query('COMMIT');
+        return { success: false, error: 'already_consumed' };
+      }
+      if (row.session_hash !== sessionHash) {
+        await client.query('COMMIT');
+        return { success: false, error: 'session_mismatch' };
+      }
+      if (new Date(row.expires_at) < new Date()) {
+        await client.query('COMMIT');
+        return { success: false, error: 'expired' };
+      }
+      const consumed = await client.query(
+        `UPDATE oauth_states SET consumed_at = NOW()
+          WHERE state_hash = $1 AND consumed_at IS NULL RETURNING consumed_at`,
+        [stateHash],
+      );
+      await client.query('COMMIT');
+      if (consumed.rows.length !== 1) return { success: false, error: 'already_consumed' };
+      return { success: true, sessionId, consumedAt: consumed.rows[0].consumed_at };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async cleanupExpired(): Promise<void> {
     await this.pool.query(
       `DELETE FROM oauth_states WHERE expires_at < NOW()`,
