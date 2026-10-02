@@ -812,6 +812,10 @@ export const oauthStates = pgTable('oauth_states', {
   id: uuid('id').primaryKey().defaultRandom(),
   stateHash: varchar('state_hash', { length: 64 }).notNull(),
   sessionHash: varchar('session_hash', { length: 64 }).notNull(),
+  // Optional tenant binding (Issue #20): a state issued to one workspace/user
+  // cannot be consumed by another.
+  workspaceId: uuid('workspace_id').references(() => workspaces.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
   issuedAt: timestamp('issued_at', { withTimezone: true }).notNull().defaultNow(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   consumedAt: timestamp('consumed_at', { withTimezone: true }),

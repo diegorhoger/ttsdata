@@ -35,9 +35,13 @@ export interface DisplayConnectionRecord {
   lastSyncAt: Date | null;
   revokedAt: Date | null;
   disconnectedAt: Date | null;
+  remoteRevocation: RemoteRevocationState;
+  remoteRevocationAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
+
+export type RemoteRevocationState = 'confirmed' | 'unavailable' | 'not_attempted';
 
 export interface CreateDisplayConnectionInput {
   workspaceId: string;
@@ -74,12 +78,13 @@ type ConnectionRow = {
   id: string; workspace_id: string; user_id: string; provider: string; provider_account_hash: string;
   scopes: string[]; status: DisplayConnectionStatus; revision: number; authorized_at: Date;
   expires_at: Date; refresh_expires_at: Date | null; last_refreshed_at: Date | null; last_sync_at: Date | null;
-  revoked_at: Date | null; disconnected_at: Date | null; created_at: Date; updated_at: Date;
+  revoked_at: Date | null; disconnected_at: Date | null; remote_revocation: RemoteRevocationState;
+  remote_revocation_at: Date | null; created_at: Date; updated_at: Date;
 };
 
 const CONNECTION_COLUMNS = `id, workspace_id, user_id, provider, provider_account_hash, scopes, status,
   revision, authorized_at, expires_at, refresh_expires_at, last_refreshed_at, last_sync_at,
-  revoked_at, disconnected_at, created_at, updated_at`;
+  revoked_at, disconnected_at, remote_revocation, remote_revocation_at, created_at, updated_at`;
 
 function mapConnection(row: ConnectionRow): DisplayConnectionRecord {
   return {
@@ -88,6 +93,7 @@ function mapConnection(row: ConnectionRow): DisplayConnectionRecord {
     revision: row.revision, authorizedAt: row.authorized_at, expiresAt: row.expires_at,
     refreshExpiresAt: row.refresh_expires_at, lastRefreshedAt: row.last_refreshed_at,
     lastSyncAt: row.last_sync_at, revokedAt: row.revoked_at, disconnectedAt: row.disconnected_at,
+    remoteRevocation: row.remote_revocation, remoteRevocationAt: row.remote_revocation_at,
     createdAt: row.created_at, updatedAt: row.updated_at,
   };
 }
@@ -203,7 +209,8 @@ export class DisplayConnectionRepository {
              refresh_token_version = $7, access_token_fingerprint = $8, refresh_token_fingerprint = $9,
              scopes = $10::jsonb, status = 'active', revision = revision + 1,
              authorized_at = $11, expires_at = $12, refresh_expires_at = $13,
-             last_refreshed_at = NULL, revoked_at = NULL, disconnected_at = NULL, updated_at = NOW()
+             last_refreshed_at = NULL, revoked_at = NULL, disconnected_at = NULL,
+             remote_revocation = 'not_attempted', remote_revocation_at = NULL, updated_at = NOW()
            WHERE workspace_id = $1 AND user_id = $2 AND id = $3
            RETURNING ${CONNECTION_COLUMNS}`,
           [input.workspaceId, input.userId, connectionId, access.encrypted, access.version, refresh.encrypted,
@@ -334,16 +341,29 @@ export class DisplayConnectionRepository {
     }
   }
 
-  async markRevoked(workspaceId: string, userId: string, connectionId: string): Promise<DisplayConnectionRecord> {
+  /**
+   * Apply a provider revocation outcome. The route layer must have actually
+   * called the provider first; this method only records the truthful result.
+   * A local-only mutation can never be recorded as 'confirmed'.
+   */
+  async applyRemoteRevocation(
+    workspaceId: string,
+    userId: string,
+    connectionId: string,
+    outcome: Exclude<RemoteRevocationState, 'not_attempted'>,
+  ): Promise<DisplayConnectionRecord> {
     const result = await this.pool.query<ConnectionRow>(
-      `UPDATE display_connections SET status = 'revoked', revoked_at = NOW(), revision = revision + 1, updated_at = NOW()
-        WHERE workspace_id = $1 AND user_id = $2 AND id = $3 AND status NOT IN ('disconnected')
+      `UPDATE display_connections
+          SET status = 'revoked', revoked_at = NOW(), revision = revision + 1, updated_at = NOW(),
+              remote_revocation = $4, remote_revocation_at = NOW()
+        WHERE workspace_id = $1 AND user_id = $2 AND id = $3 AND status <> 'disconnected'
         RETURNING ${CONNECTION_COLUMNS}`,
-      [workspaceId, userId, connectionId],
+      [workspaceId, userId, connectionId, outcome],
     );
     if (result.rows.length !== 1) throw new DisplayConnectionNotFoundError();
     return mapConnection(result.rows[0]);
   }
+
 
   async markExpired(workspaceId: string, userId: string, connectionId: string): Promise<DisplayConnectionRecord> {
     const result = await this.pool.query<ConnectionRow>(
@@ -361,7 +381,12 @@ export class DisplayConnectionRepository {
    * Credentials are overwritten with a tombstone ciphertext rather than nulled so
    * the shape constraint still holds and no plaintext can be recovered.
    */
-  async disconnect(workspaceId: string, userId: string, connectionId: string): Promise<{ connection: DisplayConnectionRecord; cancelledJobs: number }> {
+  async disconnect(
+    workspaceId: string,
+    userId: string,
+    connectionId: string,
+    outcome: Exclude<RemoteRevocationState, 'not_attempted'>,
+  ): Promise<{ connection: DisplayConnectionRecord; cancelledJobs: number }> {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
@@ -389,10 +414,11 @@ export class DisplayConnectionRepository {
            access_token_encrypted = $4, access_token_version = $5,
            refresh_token_encrypted = $6, refresh_token_version = $7,
            status = 'disconnected', disconnected_at = NOW(), revoked_at = COALESCE(revoked_at, NOW()),
-           revision = revision + 1, updated_at = NOW()
+           revision = revision + 1, updated_at = NOW(),
+           remote_revocation = $8, remote_revocation_at = NOW()
          WHERE workspace_id = $1 AND user_id = $2 AND id = $3
          RETURNING ${CONNECTION_COLUMNS}`,
-        [workspaceId, userId, connectionId, tombstone.encrypted, tombstone.version, tombstone.encrypted, tombstone.version],
+        [workspaceId, userId, connectionId, tombstone.encrypted, tombstone.version, tombstone.encrypted, tombstone.version, outcome],
       );
       await client.query('COMMIT');
       return { connection: mapConnection(result.rows[0]), cancelledJobs };

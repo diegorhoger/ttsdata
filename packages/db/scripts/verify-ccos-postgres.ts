@@ -130,6 +130,7 @@ if (!parsedUrl.pathname.slice(1).endsWith('_test')) {
 const packageRoot = resolve(process.cwd());
 const migrationsFolder = resolve(packageRoot, 'drizzle');
 const rollbackPaths = [
+  resolve(migrationsFolder, 'rollback/0013_slow_solo.down.sql'),
   resolve(migrationsFolder, 'rollback/0012_shiny_wendigo.down.sql'),
   resolve(migrationsFolder, 'rollback/0011_ai_dispatch_authorization.down.sql'),
   resolve(migrationsFolder, 'rollback/0010_ai_gateway.down.sql'),
@@ -180,7 +181,7 @@ async function getMigrationCreatedAt(): Promise<number[]> {
   const journal = JSON.parse(await readFile(journalPath, 'utf8')) as {
     entries?: Array<{ tag?: string; when?: number }>;
   };
-  const tags = ['0002_worried_lyja', '0003_silly_otto_octavius', '0004_brainy_black_bird', '0005_free_human_robot', '0006_nappy_raider', '0007_ccos_performance_snapshots', '0008_red_the_santerians', '0009_yummy_fantastic_four', '0010_ai_gateway', '0011_ai_dispatch_authorization', '0012_shiny_wendigo'];
+  const tags = ['0002_worried_lyja', '0003_silly_otto_octavius', '0004_brainy_black_bird', '0005_free_human_robot', '0006_nappy_raider', '0007_ccos_performance_snapshots', '0008_red_the_santerians', '0009_yummy_fantastic_four', '0010_ai_gateway', '0011_ai_dispatch_authorization', '0012_shiny_wendigo', '0013_slow_solo'];
   const entries = tags.map((tag) => journal.entries?.find((entry) => entry.tag === tag));
   if (entries.some((entry) => !entry || typeof entry.when !== 'number')) {
     throw new Error('Migration journal is missing a CCOS migration entry');
@@ -328,11 +329,19 @@ async function assertForwardSchema(): Promise<void> {
         AND column_name = ANY($1::text[])`,
     [['access_token_encrypted', 'access_token_version', 'refresh_token_encrypted', 'refresh_token_version',
       'access_token_fingerprint', 'refresh_token_fingerprint', 'provider_account_hash', 'authorized_at',
-      'expires_at', 'refresh_expires_at', 'revoked_at', 'disconnected_at', 'revision']],
+      'expires_at', 'refresh_expires_at', 'revoked_at', 'disconnected_at', 'revision',
+      'remote_revocation', 'remote_revocation_at']],
   );
-  if (displayColumns.rowCount !== 13) {
-    throw new Error(`Expected 13 Display connection credential/lifecycle columns, found ${displayColumns.rowCount ?? 0}`);
+  if (displayColumns.rowCount !== 15) {
+    throw new Error(`Expected 15 Display connection credential/lifecycle columns, found ${displayColumns.rowCount ?? 0}`);
   }
+  const oauthTenantColumns = await pool.query<{ column_name: string }>(
+    `SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'oauth_states'
+        AND column_name = ANY($1::text[])`,
+    [['workspace_id', 'user_id']],
+  );
+  if (oauthTenantColumns.rowCount !== 2) throw new Error('OAuth state is not tenant-bound');
   const plaintextColumns = await pool.query<{ column_name: string }>(
     `SELECT column_name FROM information_schema.columns
       WHERE table_schema = 'public' AND table_name = 'display_connections'

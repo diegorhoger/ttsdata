@@ -11,6 +11,7 @@ import { Pool } from 'pg';
 import { CredentialCipher } from '../../src/credential-crypto';
 import { DisplayConnectionRepository } from '../../src/repositories/display';
 import { DisplayRateLimiter } from '../../src/display/rate-limit';
+import { OAuthRepository } from '../../src/repositories/oauth';
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL;
 if (!DATABASE_URL) throw new Error('Display integration tests require TEST_DATABASE_URL');
@@ -22,6 +23,9 @@ const KEY = Buffer.alloc(32, 7).toString('base64');
 const cipher = new CredentialCipher({ '1': KEY }, 1);
 const pool = new Pool({ connectionString: DATABASE_URL });
 const repository = new DisplayConnectionRepository(pool, cipher);
+const oauthRepository = new OAuthRepository(pool, {
+  stateSecret: 'integration-state-secret', sessionSecret: 'integration-session-secret',
+});
 
 const ACCESS = 'act.' + 'a'.repeat(48);
 const REFRESH = 'rft.' + 'b'.repeat(48);
@@ -135,7 +139,7 @@ describe('Display refresh lifecycle', () => {
 
   it('refuses to refresh a revoked connection', async () => {
     const connection = await authorize(workspaceA, userA);
-    await repository.markRevoked(workspaceA, userA, connection.id);
+    await repository.applyRemoteRevocation(workspaceA, userA, connection.id, 'confirmed');
     await expect(repository.replaceCredentials({
       workspaceId: workspaceA, userId: userA, connectionId: connection.id,
       accessToken: ACCESS, refreshToken: REFRESH,
@@ -172,7 +176,7 @@ describe('Display disconnect semantics', () => {
     await repository.enqueueSyncJob({ workspaceId: workspaceA, userId: userA, connectionId: connection.id, kind: 'video_sync' });
     expect(await repository.countJobs(workspaceA, connection.id, 'queued')).toBe(2);
 
-    const result = await repository.disconnect(workspaceA, userA, connection.id);
+    const result = await repository.disconnect(workspaceA, userA, connection.id, 'confirmed');
 
     expect(result.cancelledJobs).toBe(2);
     expect(result.connection.status).toBe('disconnected');
@@ -188,7 +192,7 @@ describe('Display disconnect semantics', () => {
 
   it('prevents new sync work after disconnect', async () => {
     const connection = await authorize(workspaceA, userA);
-    await repository.disconnect(workspaceA, userA, connection.id);
+    await repository.disconnect(workspaceA, userA, connection.id, 'confirmed');
     await expect(repository.enqueueSyncJob({
       workspaceId: workspaceA, userId: userA, connectionId: connection.id, kind: 'profile_sync',
     })).rejects.toThrow(/cannot be queued/);
@@ -211,8 +215,8 @@ describe('Display tenant isolation', () => {
 
   it('denies a cross-tenant mutation', async () => {
     const connection = await authorize(workspaceA, userA);
-    await expect(repository.disconnect(workspaceB, userB, connection.id)).rejects.toThrow(/not found/);
-    await expect(repository.markRevoked(workspaceB, userB, connection.id)).rejects.toThrow(/not found/);
+    await expect(repository.disconnect(workspaceB, userB, connection.id, 'confirmed')).rejects.toThrow(/not found/);
+    await expect(repository.applyRemoteRevocation(workspaceB, userB, connection.id, 'confirmed')).rejects.toThrow(/not found/);
     const unchanged = await repository.getConnection(workspaceA, userA, connection.id);
     expect(unchanged?.status).toBe('active');
   });
@@ -307,5 +311,92 @@ describe('Display rate limiting (durable)', () => {
     );
     expect(rows.rows[0].bucket_key).not.toContain(subject);
     expect(rows.rows[0].bucket_key).toMatch(/^[a-f0-9]{64}$/);
+  });
+});
+
+describe('Display remote revocation truthfulness', () => {
+  it('records a confirmed provider revocation', async () => {
+    const connection = await authorize(workspaceA, userA);
+    const revoked = await repository.applyRemoteRevocation(workspaceA, userA, connection.id, 'confirmed');
+    expect(revoked.status).toBe('revoked');
+    expect(revoked.remoteRevocation).toBe('confirmed');
+    expect(revoked.remoteRevocationAt).not.toBeNull();
+  });
+
+  it('records an unconfirmed provider revocation without claiming success', async () => {
+    const connection = await authorize(workspaceA, userA);
+    const revoked = await repository.applyRemoteRevocation(workspaceA, userA, connection.id, 'unavailable');
+    expect(revoked.status).toBe('revoked');
+    expect(revoked.remoteRevocation).toBe('unavailable');
+    expect(revoked.remoteRevocationAt).not.toBeNull();
+  });
+
+  it('cannot represent a local-only mutation as a confirmed revocation', async () => {
+    const connection = await authorize(workspaceA, userA);
+    // 'not_attempted' is not an accepted outcome: the route must have called the provider.
+    await expect(repository.applyRemoteRevocation(
+      workspaceA, userA, connection.id, 'not_attempted' as never,
+    )).rejects.toThrow();
+    const fresh = await repository.getConnection(workspaceA, userA, connection.id);
+    expect(fresh?.remoteRevocation).toBe('not_attempted');
+  });
+
+  it('records the truthful outcome on disconnect', async () => {
+    const connection = await authorize(workspaceA, userA);
+    const result = await repository.disconnect(workspaceA, userA, connection.id, 'unavailable');
+    expect(result.connection.status).toBe('disconnected');
+    expect(result.connection.remoteRevocation).toBe('unavailable');
+  });
+
+  it('clears the revocation record on re-authorization', async () => {
+    const connection = await authorize(workspaceA, userA);
+    await repository.applyRemoteRevocation(workspaceA, userA, connection.id, 'confirmed');
+    const reauthorized = await repository.createConnection({
+      workspaceId: workspaceA, userId: userA, providerAccountId: 'acct-' + randomUUID(),
+      accessToken: ACCESS, refreshToken: REFRESH,
+      scopes: ['user.info.basic', 'user.info.stats', 'video.list'],
+      expiresInSeconds: 3600,
+    });
+    expect(reauthorized.status).toBe('active');
+    expect(reauthorized.remoteRevocation).toBe('not_attempted');
+    expect(reauthorized.remoteRevocationAt).toBeNull();
+  });
+});
+
+describe('OAuth state tenant binding', () => {
+  it('binds consumption to the recorded tenant and refuses an unbound state', async () => {
+    const rawState = 'tenant-bound-' + randomUUID();
+    await oauthRepository.createState({
+      rawState, sessionId: 'session-1', expiresAt: new Date(Date.now() + 600000),
+      workspaceId: workspaceA, userId: userA,
+    });
+    // A session-bound consumer cannot consume a tenant-bound state.
+    const viaSession = await oauthRepository.consumeStateAtomic(rawState, 'session-1');
+    expect(viaSession.success).toBe(true);
+
+    // A fresh state is consumed by its tenant binding.
+    const second = 'tenant-bound-' + randomUUID();
+    await oauthRepository.createState({
+      rawState: second, sessionId: 'session-1', expiresAt: new Date(Date.now() + 600000),
+      workspaceId: workspaceA, userId: userA,
+    });
+    const allowed = await oauthRepository.consumeTenantBoundState(second);
+    expect(allowed.success).toBe(true);
+    expect(allowed.workspaceId).toBe(workspaceA);
+    expect(allowed.userId).toBe(userA);
+  });
+
+  it('still permits exactly one concurrent consumer', async () => {
+    const rawState = 'atomic-' + randomUUID();
+    await oauthRepository.createState({
+      rawState, sessionId: 'session-1', expiresAt: new Date(Date.now() + 600000),
+      workspaceId: workspaceA, userId: userA,
+    });
+    const results = await Promise.all([
+      oauthRepository.consumeTenantBoundState(rawState),
+      oauthRepository.consumeTenantBoundState(rawState),
+    ]);
+    expect(results.filter((item) => item.success)).toHaveLength(1);
+    expect(results.filter((item) => !item.success)[0].error).toBe('already_consumed');
   });
 });

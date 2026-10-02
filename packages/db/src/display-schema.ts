@@ -57,6 +57,9 @@ export const displayConnections = pgTable('display_connections', {
   lastSyncAt: date('last_sync_at'),
   revokedAt: date('revoked_at'),
   disconnectedAt: date('disconnected_at'),
+  /** Truthful provider outcome: 'confirmed' only when TikTok confirmed it. */
+  remoteRevocation: text('remote_revocation').notNull().default('not_attempted'),
+  remoteRevocationAt: date('remote_revocation_at'),
   createdAt: date('created_at').notNull().defaultNow(),
   updatedAt: date('updated_at').notNull().defaultNow(),
 }, (t) => ({
@@ -67,6 +70,8 @@ export const displayConnections = pgTable('display_connections', {
   shape: check('display_connections_shape_check', sql`
     ${t.provider} = 'tiktok_display'
     AND ${t.status} IN ('active','expired','revoked','disconnected')
+    AND ${t.remoteRevocation} IN ('confirmed','unavailable','not_attempted')
+    AND ((${t.remoteRevocation} = 'not_attempted') = (${t.remoteRevocationAt} IS NULL))
     AND ${t.revision} > 0
     AND ${t.providerAccountHash} ~ '^[a-f0-9]{64}$'
     AND ${t.accessTokenEncrypted} ~ '^[A-Za-z0-9+/=]+\\.[A-Za-z0-9+/=]+\\.[A-Za-z0-9+/=]+$'

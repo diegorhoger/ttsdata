@@ -65,6 +65,7 @@ export {
   DisplayConnectionStateError,
   DisplayCredentialExpiredError,
   REFRESH_SKEW_MS,
+  type RemoteRevocationState,
   type DisplayConnectionRecord,
   type DisplayConnectionStatus,
   type DisplayAuditAction,

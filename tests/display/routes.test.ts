@@ -1,13 +1,20 @@
 /**
- * Issue #20 — Display route tests.
- *
- * Covers authz, tenant derivation, secret non-leakage in responses, kill-switch
- * mapping, rate-limit enforcement, and strict payload rejection.
+ * Display route tests (surviving surface: reads, jobs, kill switch, errors).
+ * The authorization/refresh/revoke/disconnect lifecycle is covered in
+ * lifecycle.test.ts, which proves the real production orchestration.
  */
+
+process.env.TIKTOK_CLIENT_KEY = 'test-client-key';
+process.env.TIKTOK_CLIENT_SECRET = 'test-client-secret';
+process.env.NEXT_PUBLIC_TIKTOK_REDIRECT_URI = 'https://ttsdata.netlify.app/api/display/callback';
+process.env.OAUTH_STATE_SECRET = 's'.repeat(32);
+process.env.OAUTH_SESSION_SECRET = 't'.repeat(32);
+process.env.OAUTH_CANONICAL_ORIGIN = 'https://ttsdata.netlify.app';
 
 import Fastify, { type FastifyReply, type FastifyRequest } from '../../apps/api/node_modules/fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { registerDisplayRoutes, type DisplayRouteOptions } from '../../apps/api/src/routes/display';
+import { DisplayApiAdapter } from '../../packages/db/src/display/adapter';
 import { errorHandler } from '../../apps/api/src/lib/errors';
 import {
   DisplayCapabilityDisabledError,
@@ -21,6 +28,12 @@ const WORKSPACE_ID = '11111111-1111-4111-8111-111111111111';
 const USER_ID = '44444444-4444-4444-8444-444444444444';
 const CONNECTION_ID = '55555555-5555-4555-8555-555555555555';
 const NOW = new Date('2026-10-02T12:00:00.000Z');
+const config = {
+  clientKey: 'ck', clientSecret: 'cs',
+  redirectUri: 'https://ttsdata.netlify.app/api/display/callback',
+  stateSecret: 's'.repeat(32), sessionSecret: 't'.repeat(32), resultSecret: 'r'.repeat(32),
+  canonicalOrigin: 'https://ttsdata.netlify.app',
+};
 const ACCESS_TOKEN = 'act.' + 'z'.repeat(48);
 const REFRESH_TOKEN = 'rft.' + 'y'.repeat(48);
 
@@ -29,7 +42,9 @@ const connection = {
   providerAccountHash: 'a'.repeat(64), scopes: ['user.info.basic', 'user.info.stats', 'video.list'],
   status: 'active' as const, revision: 1, authorizedAt: NOW, expiresAt: NOW,
   refreshExpiresAt: NOW, lastRefreshedAt: null, lastSyncAt: null,
-  revokedAt: null, disconnectedAt: null, createdAt: NOW, updatedAt: NOW,
+  revokedAt: null, disconnectedAt: null,
+  remoteRevocation: 'not_attempted' as const, remoteRevocationAt: null,
+  createdAt: NOW, updatedAt: NOW,
 };
 
 function createRepository() {
@@ -38,7 +53,9 @@ function createRepository() {
     getConnection: vi.fn().mockResolvedValue(connection),
     createConnection: vi.fn().mockResolvedValue(connection),
     replaceCredentials: vi.fn().mockResolvedValue({ ...connection, revision: 2 }),
-    markRevoked: vi.fn().mockResolvedValue({ ...connection, status: 'revoked', revokedAt: NOW }),
+    readCredentials: vi.fn().mockResolvedValue({ connection, accessToken: ACCESS_TOKEN, refreshToken: REFRESH_TOKEN }),
+    replaceCredentials: vi.fn().mockResolvedValue({ ...connection, revision: 2 }),
+    applyRemoteRevocation: vi.fn().mockResolvedValue({ ...connection, status: 'revoked', revokedAt: NOW, remoteRevocation: 'confirmed', remoteRevocationAt: NOW }),
     disconnect: vi.fn().mockResolvedValue({ connection: { ...connection, status: 'disconnected', disconnectedAt: NOW }, cancelledJobs: 3 }),
     enqueueSyncJob: vi.fn().mockResolvedValue({ id: '66666666-6666-4666-8666-666666666666' }),
     countJobs: vi.fn().mockResolvedValue(2),
@@ -67,6 +84,8 @@ async function buildApp(
     prefix: '/api/display',
     repository: repository as unknown as DisplayRouteOptions['repository'],
     rateLimiter: limiter as unknown as DisplayRouteOptions['rateLimiter'],
+    config: config as unknown as DisplayRouteOptions['config'],
+    adapter: new DisplayApiAdapter(),
     authenticate,
   });
   return app;
@@ -137,85 +156,6 @@ describe('Display connection reads', () => {
 });
 
 describe('Display lifecycle mutations', () => {
-  it('records a new connection with the authenticated tenant only', async () => {
-    const repository = createRepository();
-    const app = await buildApp(repository);
-    apps.push(app);
-    const response = await app.inject({
-      method: 'POST', url: '/api/display/connections',
-      payload: {
-        providerAccountId: 'provider-account', accessToken: ACCESS_TOKEN, refreshToken: REFRESH_TOKEN,
-        scopes: ['user.info.basic', 'user.info.stats', 'video.list'], expiresInSeconds: 3600,
-      },
-    });
-    expect(response.statusCode).toBe(201);
-    expect(repository.createConnection).toHaveBeenCalledWith(expect.objectContaining({
-      workspaceId: WORKSPACE_ID, userId: USER_ID, providerAccountId: 'provider-account',
-    }));
-    expect(response.body).not.toContain(ACCESS_TOKEN);
-  });
-
-  it('rejects a client-supplied workspace or user identifier', async () => {
-    const repository = createRepository();
-    const app = await buildApp(repository);
-    apps.push(app);
-    const response = await app.inject({
-      method: 'POST', url: '/api/display/connections',
-      payload: {
-        providerAccountId: 'a', accessToken: ACCESS_TOKEN, refreshToken: REFRESH_TOKEN,
-        scopes: ['user.info.basic'], expiresInSeconds: 3600, workspaceId: 'attacker',
-      },
-    });
-    expect(response.statusCode).toBe(400);
-    expect(repository.createConnection).not.toHaveBeenCalled();
-  });
-
-  it('refreshes credentials and audits the success', async () => {
-    const repository = createRepository();
-    const app = await buildApp(repository);
-    apps.push(app);
-    const response = await app.inject({
-      method: 'POST', url: `/api/display/connections/${CONNECTION_ID}/refresh`,
-      payload: {
-        accessToken: ACCESS_TOKEN, refreshToken: REFRESH_TOKEN,
-        scopes: ['user.info.basic', 'user.info.stats', 'video.list'], expiresInSeconds: 3600,
-      },
-    });
-    expect(response.statusCode).toBe(200);
-    expect(repository.replaceCredentials).toHaveBeenCalledWith(expect.objectContaining({
-      workspaceId: WORKSPACE_ID, userId: USER_ID, connectionId: CONNECTION_ID,
-    }));
-    expect(repository.recordAudit).toHaveBeenCalledWith(expect.objectContaining({ action: 'token_refresh', outcome: 'success' }));
-    expect(response.body).not.toContain(ACCESS_TOKEN);
-  });
-
-  it('maps a refresh failure to a stable error and audits the failure', async () => {
-    const repository = createRepository();
-    repository.replaceCredentials.mockRejectedValueOnce(new Error('boom'));
-    const app = await buildApp(repository);
-    apps.push(app);
-    const response = await app.inject({
-      method: 'POST', url: `/api/display/connections/${CONNECTION_ID}/refresh`,
-      payload: { accessToken: ACCESS_TOKEN, refreshToken: REFRESH_TOKEN, scopes: ['user.info.basic'], expiresInSeconds: 3600 },
-    });
-    expect(response.statusCode).toBe(500);
-    expect(response.body).not.toContain(ACCESS_TOKEN);
-    expect(repository.recordAudit).toHaveBeenCalledWith(expect.objectContaining({ action: 'token_refresh', outcome: 'failure' }));
-  });
-
-  it('maps an expired refresh credential to 409', async () => {
-    const repository = createRepository();
-    repository.replaceCredentials.mockRejectedValueOnce(new DisplayCredentialExpiredError());
-    const app = await buildApp(repository);
-    apps.push(app);
-    const response = await app.inject({
-      method: 'POST', url: `/api/display/connections/${CONNECTION_ID}/refresh`,
-      payload: { accessToken: ACCESS_TOKEN, refreshToken: REFRESH_TOKEN, scopes: ['user.info.basic'], expiresInSeconds: 3600 },
-    });
-    expect(response.statusCode).toBe(409);
-    expect(response.json()).toMatchObject({ error: 'CREDENTIAL_EXPIRED' });
-  });
-
   it('disconnects and reports the real cancellation count', async () => {
     const repository = createRepository();
     const app = await buildApp(repository);
@@ -227,18 +167,6 @@ describe('Display lifecycle mutations', () => {
     expect(response.json()).toMatchObject({ cancelledJobs: 3 });
     expect(repository.recordAudit).toHaveBeenCalledWith(expect.objectContaining({ action: 'disconnect' }));
     expect(repository.recordAudit).toHaveBeenCalledWith(expect.objectContaining({ action: 'sync_cancel' }));
-  });
-
-  it('revokes a connection', async () => {
-    const repository = createRepository();
-    const app = await buildApp(repository);
-    apps.push(app);
-    const response = await app.inject({
-      method: 'POST', url: `/api/display/connections/${CONNECTION_ID}/revoke`, payload: {},
-    });
-    expect(response.statusCode).toBe(200);
-    expect(repository.markRevoked).toHaveBeenCalledWith(WORKSPACE_ID, USER_ID, CONNECTION_ID);
-    expect(repository.recordAudit).toHaveBeenCalledWith(expect.objectContaining({ action: 'token_revoke', outcome: 'success' }));
   });
 
   it('enqueues and reports sync jobs', async () => {
@@ -277,22 +205,6 @@ describe('Display kill switch, capability, and rate limits', () => {
     expect(response.json()).toMatchObject({ error: 'CAPABILITY_DISABLED' });
   });
 
-  it('maps a capability violation to 400', async () => {
-    const repository = createRepository();
-    repository.createConnection.mockRejectedValueOnce(new CapabilityError('Shop capability is not authorized by this node: shop.x'));
-    const app = await buildApp(repository);
-    apps.push(app);
-    const response = await app.inject({
-      method: 'POST', url: '/api/display/connections',
-      payload: {
-        providerAccountId: 'a', accessToken: ACCESS_TOKEN, refreshToken: REFRESH_TOKEN,
-        scopes: ['user.info.basic'], expiresInSeconds: 3600,
-      },
-    });
-    expect(response.statusCode).toBe(400);
-    expect(response.json()).toMatchObject({ error: 'CAPABILITY_VIOLATION' });
-  });
-
   it('maps an invalid state to 409', async () => {
     const repository = createRepository();
     repository.disconnect.mockRejectedValueOnce(new DisplayConnectionStateError('Display connection is revoked'));
@@ -307,7 +219,7 @@ describe('Display kill switch, capability, and rate limits', () => {
 
   it('maps a missing connection to 404', async () => {
     const repository = createRepository();
-    repository.markRevoked.mockRejectedValueOnce(new DisplayConnectionNotFoundError());
+    repository.applyRemoteRevocation.mockRejectedValueOnce(new DisplayConnectionNotFoundError());
     const app = await buildApp(repository);
     apps.push(app);
     const response = await app.inject({
@@ -341,17 +253,4 @@ describe('Display kill switch, capability, and rate limits', () => {
     expect(evidence.body).not.toContain('accessToken');
   });
 
-  it('stores sanitized evidence through the API', async () => {
-    const repository = createRepository();
-    const app = await buildApp(repository);
-    apps.push(app);
-    const response = await app.inject({
-      method: 'POST', url: '/api/display/evidence',
-      payload: { operation: 'user_info', succeeded: true, statusCode: 200, payload: { follower_count: 12 } },
-    });
-    expect(response.statusCode).toBe(201);
-    expect(repository.recordProbeEvidence).toHaveBeenCalledWith(expect.objectContaining({
-      workspaceId: WORKSPACE_ID, userId: USER_ID, operation: 'user_info',
-    }));
-  });
 });
