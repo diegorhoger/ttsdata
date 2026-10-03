@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "pnpm --filter @ttsdata/shared build && pnpm --filter @ttsdata/db build && next build",
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit"
