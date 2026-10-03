@@ -2,6 +2,7 @@
 
 **Date:** 2026-09-16
 **Status:** DOC_VERIFIED for Display API endpoint paths only. NO capability is PROBE_VERIFIED. NO scope is confirmed as granted.
+**Display probe gate:** OPEN — see `docs/display-probe-evidence.md` for the operator procedure, proof classifications and current matrix.
 **Application type:** Web (creator-facing, seller later)
 **Approved marketplace:** BR (to be verified)
 
@@ -20,11 +21,18 @@ This worksheet tracks verification status for TikTok API capabilities TTSData ne
 | Status | Meaning |
 |--------|---------|
 | `UNVERIFIED` | No evidence; assumed from memory or convention |
-| `DOC_VERIFIED` | Confirmed in official TikTok documentation (endpoint path exists) |
-| `SCOPE_AVAILABLE` | Scope name observed in portal list but NOT confirmed as granted to this app |
-| `PROBE_VERIFIED` | Confirmed via controlled API response with live token |
+| `DOC_VERIFIED` | Stated by current official TikTok documentation; NOT observed in a live call |
+| `SCOPE_AVAILABLE` | Scope observed/configurable in the approved application environment, but NOT demonstrated by a successful authorization |
+| `NOT_GRANTED` | Authorization completed and the scope was NOT included in the granted set |
+| `NOT_OBSERVED` | Endpoint called successfully but the field was absent from the response |
+| `PROBE_VERIFIED` | Observed through a controlled authenticated provider call, sanitized and recorded |
+| `UNAVAILABLE` | Not obtainable from this capability family, or excluded by policy |
 | `LEGAL_REVIEWED` | Data use reviewed by qualified Brazilian counsel |
 | `EXCLUDED` | Intentionally excluded from MVP |
+
+A capability moves `DOC_VERIFIED` → `PROBE_VERIFIED` only with recorded sanitized
+evidence. Absence of an optional or ungranted field is evidence (`NOT_OBSERVED` /
+`NOT_GRANTED`) and must never be recorded as zero or fabricated.
 
 ---
 
@@ -173,7 +181,7 @@ Research API is for qualified non-commercial research only. NOT suitable for TTS
 
 ## Section 7: Safe Probe Practices
 
-- Store token in `$TIKTOK_TOKEN` env var, never paste into chat
+- Store the token in the `$TIKTOK_TOKEN` env var; never paste a real token into chat, a file, or a commit
 - Replace `open_id`, `union_id`, usernames, avatar URLs, tokens, log_ids with placeholders
 - Preserve field names, value types, nulls, pagination structure, error objects
 - Commit only sanitized fixtures with stable placeholders
@@ -209,10 +217,15 @@ curl -L -X POST 'https://open.tiktokapis.com/v2/video/list/?fields=id,title,crea
 
 ### After Display API Probe Verification
 
-4. Legal review: data retention, LGPD, aggregation permissions
-5. Build Display API OAuth flow (creator profile read, video list read)
-6. Build Display API ingestion for connected user's own data only
-7. Private analytics dashboards for connected user only
+The OAuth lifecycle itself is complete and merged (Issue #20, PR #55). What remains
+gated is the *evidence* that the documented Display contract matches observed
+behaviour — required before Issue #21 may model it.
+
+4. Run the operator probe in `docs/display-probe-evidence.md`
+5. Record sanitized fixtures and update the evidence matrix
+6. Legal review: data retention, LGPD, aggregation permissions
+7. Build Display API ingestion for connected user's own data only (Issue #21) — BLOCKED until step 5 passes
+8. Private analytics dashboards for connected user only (Issues #22/#23)
 
 ### Separately (TikTok Shop — NOT unblocked by Display probes)
 
@@ -236,4 +249,4 @@ curl -L -X POST 'https://open.tiktokapis.com/v2/video/list/?fields=id,title,crea
 
 *Document status: Draft for independent review.*
 *NO scope confirmed as granted. NO endpoint probed. NO production credentials used or requested.*
-*Next: User runs Display API probes and provides sanitized JSON responses.*
+*Next: operator runs the Display probe procedure in `docs/display-probe-evidence.md` and provides sanitized responses.*
