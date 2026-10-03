@@ -3,8 +3,12 @@
 **Purpose:** convert the documented Display contract into *observed* evidence before
 Issue #21 (Display profile/video synchronization) is authorized to implement.
 
-**Status as of 2026-10-03:** `AWAITING OPERATOR PROBE`. No Display capability is
-`PROBE_VERIFIED`. No scope is confirmed as granted. No live provider call has been made.
+**Status as of 2026-10-03:** `AWAITING OPERATOR PROBE`. **Zero** `PROBE_VERIFIED`
+entries. No scope is confirmed as granted. No live provider call has been made.
+
+The TTSData-side lifecycle is `CODE_VERIFIED` (Issue #20, merged via PR #55). That is a
+statement about our implementation and its tests — **not** about TikTok's behaviour, and
+not a substitute for the live observation this gate requires.
 
 **Baseline when this gate opened:** `origin/master` @ `261779d229e6aa39b7a7608c732530397b74bf92`
 
@@ -29,17 +33,23 @@ Every #21-relevant assertion carries exactly one label. There is no ambiguous
 
 | Classification | Meaning |
 |---|---|
-| `PROBE_VERIFIED` | Observed through a controlled authenticated provider call, sanitized and recorded |
+| `PROBE_VERIFIED` | **Reserved.** Observed through a controlled authenticated TikTok call, with sanitized recorded evidence. Nothing else may use this label. |
+| `CODE_VERIFIED` | Invariant established by production code plus automated tests, but NOT established by a live provider observation |
 | `DOC_VERIFIED` | Stated by current official TikTok documentation; NOT observed in a live call |
 | `SCOPE_AVAILABLE` | Scope observed/configurable in the approved application environment, but not demonstrated by a successful authorization |
 | `NOT_GRANTED` | Authorization completed and the scope was NOT included in the granted set |
-| `NOT_OBSERVED` | Endpoint called successfully but the field was absent from the response |
+| `NOT_OBSERVED` | Not yet observed. For a field: the endpoint was called successfully and the field was absent. For a lifecycle: the live provider path has not been exercised. |
 | `UNAVAILABLE` | Not obtainable from this capability family, or excluded from scope by policy |
 | `LEGAL_REVIEWED` | Data-use reviewed by qualified Brazilian counsel |
 
 A capability may move `DOC_VERIFIED` → `PROBE_VERIFIED` only with recorded sanitized
-evidence. Absence of an optional or ungranted field is itself evidence (`NOT_OBSERVED`
-or `NOT_GRANTED`) and must never be recorded as zero, empty, or fabricated.
+evidence from a live call. Absence of an optional or ungranted field is itself evidence
+(`NOT_OBSERVED` / `NOT_GRANTED`) and must never be recorded as zero, empty, or
+fabricated.
+
+`CODE_VERIFIED` exists so that a tested invariant in our own code is not laundered into
+`PROBE_VERIFIED`. Passing tests prove our code behaves as written; they prove nothing
+about what TikTok returns.
 
 ---
 
@@ -47,12 +57,13 @@ or `NOT_GRANTED`) and must never be recorded as zero, empty, or fabricated.
 
 | # | Assertion | Classification |
 |---|---|---|
-| A1 | Display OAuth start → provider → callback completes end to end | `DOC_VERIFIED` |
-| A2 | Granted scope set for the approved application | `SCOPE_AVAILABLE` (all four) |
-| A3 | `user.info.basic` granted | `SCOPE_AVAILABLE` |
-| A4 | `user.info.profile` granted | `SCOPE_AVAILABLE` |
-| A5 | `user.info.stats` granted | `SCOPE_AVAILABLE` |
-| A6 | `video.list` granted | `SCOPE_AVAILABLE` |
+| A1 | TTSData Display OAuth lifecycle orchestration (start → state → callback → exchange → encrypted persistence) | `CODE_VERIFIED` — Issue #20, reviewed and merged via PR #55; `tests/display/lifecycle.test.ts` |
+| A2 | Successful **live** TikTok start → provider authorization → callback | `NOT_OBSERVED` — no live provider call has been made |
+| A3 | Granted scope set for the approved application | `SCOPE_AVAILABLE` (all four) |
+| A4 | `user.info.basic` granted | `SCOPE_AVAILABLE` |
+| A5 | `user.info.profile` granted | `SCOPE_AVAILABLE` |
+| A6 | `user.info.stats` granted | `SCOPE_AVAILABLE` |
+| A7 | `video.list` granted | `SCOPE_AVAILABLE` |
 | B1 | `GET /v2/user/info/` returns 200 with a data envelope | `DOC_VERIFIED` |
 | B2 | Profile field set under granted scopes | `DOC_VERIFIED` |
 | C1 | `POST /v2/video/list/` accepted request shape | `DOC_VERIFIED` |
@@ -63,7 +74,12 @@ or `NOT_GRANTED`) and must never be recorded as zero, empty, or fabricated.
 | D1 | Video field set under granted scope | `DOC_VERIFIED` |
 | E1 | Cover-image URL lifetime | `DOC_VERIFIED` (claimed; see limitation L2) |
 | F1 | Provider error-envelope shape | `DOC_VERIFIED` |
-| G1 | Display-only family boundary (no Shop host/scope) | `PROBE_VERIFIED` — enforced in code and tested (`tests/display/capability.test.ts`) |
+| G1 | Display-only family boundary (no Shop host/scope) | `CODE_VERIFIED` — enforced in `display/capability.ts`, tested in `tests/display/capability.test.ts` |
+| G2 | Credential encryption, tenant isolation, truthful revocation, kill switch | `CODE_VERIFIED` — Issue #20 tests |
+
+**`PROBE_VERIFIED` entries: 0.** No controlled authenticated TikTok observation has been
+recorded, so the label is unused in this matrix. `CODE_VERIFIED` entries describe our own
+implementation and carry no claim about provider behaviour.
 
 ---
 

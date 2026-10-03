@@ -25,14 +25,19 @@ This worksheet tracks verification status for TikTok API capabilities TTSData ne
 | `SCOPE_AVAILABLE` | Scope observed/configurable in the approved application environment, but NOT demonstrated by a successful authorization |
 | `NOT_GRANTED` | Authorization completed and the scope was NOT included in the granted set |
 | `NOT_OBSERVED` | Endpoint called successfully but the field was absent from the response |
-| `PROBE_VERIFIED` | Observed through a controlled authenticated provider call, sanitized and recorded |
+| `PROBE_VERIFIED` | **Reserved.** Observed through a controlled authenticated TikTok call, with sanitized recorded evidence. Nothing else may use this label. |
+| `CODE_VERIFIED` | Invariant established by production code plus automated tests, but NOT established by a live provider observation |
 | `UNAVAILABLE` | Not obtainable from this capability family, or excluded by policy |
 | `LEGAL_REVIEWED` | Data use reviewed by qualified Brazilian counsel |
 | `EXCLUDED` | Intentionally excluded from MVP |
 
 A capability moves `DOC_VERIFIED` → `PROBE_VERIFIED` only with recorded sanitized
-evidence. Absence of an optional or ungranted field is evidence (`NOT_OBSERVED` /
-`NOT_GRANTED`) and must never be recorded as zero or fabricated.
+evidence from a live call. Absence of an optional or ungranted field is evidence
+(`NOT_OBSERVED` / `NOT_GRANTED`) and must never be recorded as zero or fabricated.
+
+`CODE_VERIFIED` exists so a tested invariant in our own code is not laundered into
+`PROBE_VERIFIED`: passing tests prove our code behaves as written, not what TikTok
+returns.
 
 ---
 
@@ -168,7 +173,7 @@ Research API is for qualified non-commercial research only. NOT suitable for TTS
 
 | Family | Endpoints | Use for TTSData | Status |
 |--------|-----------|-----------------|--------|
-| Display API | `open.tiktokapis.com/v2/user/info/`, `/video/list/` | Connected user profile + videos | DOC_VERIFIED (paths only) |
+| Display API | `open.tiktokapis.com/v2/user/info/`, `/video/list/` | Connected user profile + videos | DOC_VERIFIED (paths only); OAuth lifecycle CODE_VERIFIED (#20); no capability PROBE_VERIFIED |
 | TikTok Shop API | `open-api.tiktokglobalshop.com/` | Products, GMV, orders, commissions | UNVERIFIED |
 | Data Portability | Per scope | EEA/UK export only | REJECTED for BR |
 | User exports | N/A (user uploads) | Seller/creator reports with consent | VIABLE with consent |
