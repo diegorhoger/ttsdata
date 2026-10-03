@@ -13,6 +13,7 @@ import { registerAuthRoutes } from './routes/auth';
 import { registerProductRoutes } from './routes/products';
 import { registerTikTokRoutes } from './routes/tiktok';
 import { registerConnectionRoutes } from './routes/connections';
+import { registerDisplayRoutes } from './routes/display';
 import { registerWatchlistRoutes } from './routes/watchlists';
 import { registerAlertRoutes } from './routes/alerts';
 import { registerCreatorRoutes } from './routes/creators';
@@ -78,6 +79,9 @@ async function buildServer() {
 
   // Connection deletion routes
   await app.register(registerConnectionRoutes, { prefix: '/api/connections' });
+
+  // Issue #20 — TikTok Display authorization lifecycle
+  await app.register(registerDisplayRoutes, { prefix: '/api/display' });
 
   // Watchlist routes
   await app.register(registerWatchlistRoutes, { prefix: '/api/watchlists' });

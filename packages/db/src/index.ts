@@ -51,3 +51,27 @@ export * from './ccos/dashboard';
 export * from './repositories/dashboard';
 export * from './ai-crypto';
 export * from './repositories/ai';
+
+export { CredentialCipher, loadCredentialCipher, credentialContext } from './credential-crypto';
+export * from './display/capability';
+export * from './display/sanitize';
+export * from './display/adapter';
+export { loadDisplayConfig, DisplayConfigError, type DisplayConfig } from './display/config';
+export { DisplayRateLimiter, DISPLAY_RATE_LIMITS, type DisplayRateLimitedAction, type DisplayRateLimitResult } from './display/rate-limit';
+export {
+  DisplayConnectionRepository,
+  DisplayCapabilityDisabledError,
+  DisplayConnectionNotFoundError,
+  DisplayConnectionStateError,
+  DisplayCredentialExpiredError,
+  REFRESH_SKEW_MS,
+  type RemoteRevocationState,
+  type DisplayConnectionRecord,
+  type DisplayConnectionStatus,
+  type DisplayAuditAction,
+  type DisplayAuditOutcome,
+  type DisplaySyncJobKind,
+  type CreateDisplayConnectionInput,
+  type RefreshCredentialsInput,
+  type StoredDisplayCredentials,
+} from './repositories/display';
