@@ -147,6 +147,26 @@ const journalPath = resolve(migrationsFolder, 'meta/_journal.json');
 const pool = new Pool({ connectionString: TEST_DATABASE_URL });
 const database = drizzle(pool);
 
+/**
+ * Build the deployable API artifact. The deployment smoke test boots
+ * `apps/api/dist/server.js`, so the artifact must exist and be current —
+ * otherwise the gate would pass against a stale build.
+ */
+async function buildApiArtifact(): Promise<void> {
+  await new Promise<void>((resolvePromise, reject) => {
+    const child = spawn('pnpm', ['--filter', '@ttsdata/api', 'build:production'], {
+      cwd: resolve(packageRoot, '../..'),
+      env: process.env,
+      stdio: 'inherit',
+    });
+    child.once('error', reject);
+    child.once('exit', (code, signal) => {
+      if (code === 0) resolvePromise();
+      else reject(new Error(`API production build failed (exit=${String(code)}, signal=${String(signal)})`));
+    });
+  });
+}
+
 async function runConstraintTests(): Promise<void> {
   await new Promise<void>((resolvePromise, reject) => {
     const child = spawn('pnpm', [
@@ -161,6 +181,7 @@ async function runConstraintTests(): Promise<void> {
       'apps/api/tests/ccos-dashboard.integration.test.ts',
       'packages/db/tests/ai/integration.test.ts',
       'packages/db/tests/display/integration.test.ts',
+      'packages/db/tests/deployment/integration.test.ts',
     ], {
       cwd: resolve(packageRoot, '../..'),
       env: { ...process.env, TEST_DATABASE_URL },
@@ -424,6 +445,9 @@ async function main(): Promise<void> {
   console.log('1/4 Applying migrations to explicit test database...');
   await migrate(database, { migrationsFolder });
   await assertForwardSchema();
+
+  console.log('   Building the deployable API artifact for the smoke test...');
+  await buildApiArtifact();
 
   console.log('2/4 Running CCOS PostgreSQL constraint tests...');
   await runConstraintTests();

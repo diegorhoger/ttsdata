@@ -8,18 +8,11 @@
     "skipLibCheck": true,
     "outDir": "./dist",
     "resolveJsonModule": true,
-    "baseUrl": ".",
-    "paths": {
-      "@ttsdata/shared": [
-        "../../packages/shared/src"
-      ],
-      "@ttsdata/db": [
-        "../../packages/db/src"
-      ],
-      "@ttsdata/data-quality": [
-        "../../packages/data-quality/src"
-      ]
-    }
+    "rootDir": "src",
+    "declaration": true,
+    "declarationMap": false,
+    "sourceMap": true,
+    "incremental": false
   },
   "include": [
     "src/**/*"

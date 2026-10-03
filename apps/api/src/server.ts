@@ -1,6 +1,10 @@
 /**
  * TTSData API server — Fastify + Drizzle ORM
  * M0: Auth, tenant boundaries, TikTok OAuth, product CRUD
+ *
+ * Production boot is fail-closed: `loadRuntimeConfig` aborts on missing,
+ * placeholder, or unsafe configuration rather than falling back to a
+ * development default. See `lib/runtime-config.ts`.
  */
 
 import 'dotenv/config';
@@ -27,17 +31,29 @@ import { registerHealthRoutes } from './routes/health';
 import { registerCCOSRoutes } from './routes/ccos';
 import { registerAIRoutes } from './routes/ai';
 import { errorHandler } from './lib/errors';
+import { loadRuntimeConfig, describeRuntimeConfig, type RuntimeConfig } from './lib/runtime-config';
 
-const PORT = parseInt(process.env.PORT || '4000', 10);
-const HOST = process.env.HOST || '0.0.0.0';
-
-async function buildServer() {
+export async function buildServer(config: RuntimeConfig) {
   const app = Fastify({
-    trustProxy: process.env.TRUSTED_PROXY_CIDRS?.split(',').filter(Boolean) ?? false,
+    trustProxy: config.trustProxy,
     logger: {
       level: process.env.LOG_LEVEL || 'info',
-      transport: process.env.NODE_ENV === 'development' 
-        ? { target: 'pino-pretty' } 
+      // Never log credential-bearing material: OAuth codes, tokens and cookies
+      // all travel through these routes.
+      redact: {
+        paths: [
+          'req.headers.authorization',
+          'req.headers.cookie',
+          'res.headers["set-cookie"]',
+          'req.body.access_token',
+          'req.body.refresh_token',
+          'req.body.code',
+          'req.body.client_secret',
+        ],
+        censor: '[REDACTED]',
+      },
+      transport: config.environment === 'development'
+        ? { target: 'pino-pretty' }
         : undefined,
     },
   });
@@ -45,15 +61,15 @@ async function buildServer() {
   // Security headers
   await app.register(helmet);
 
-  // CORS
+  // CORS: explicit allow-list only. No wildcard, no origin reflection.
   await app.register(cors, {
-    origin: process.env.APP_URL || 'http://localhost:3000',
+    origin: config.allowedOrigins,
     credentials: true,
   });
 
   // Cookie support for sessions
   await app.register(cookie, {
-    secret: process.env.AUTH_SECRET || 'dev-secret-change-in-production',
+    secret: config.authSecret,
   });
 
   // Rate limiting
@@ -65,7 +81,7 @@ async function buildServer() {
   // Global error handler
   app.setErrorHandler(errorHandler);
 
-  // Health check
+  // Health check (liveness/readiness; queries the database)
   await app.register(registerHealthRoutes, { prefix: '/health' });
 
   // Auth routes
@@ -118,14 +134,39 @@ async function buildServer() {
 }
 
 async function main() {
-  const app = await buildServer();
+  // Fail closed before opening a listener or a database pool.
+  const config = loadRuntimeConfig();
+  const app = await buildServer(config);
+
+  // Graceful shutdown: stop accepting connections and drain in-flight requests.
+  // Required for zero-downtime deploys and container restarts.
+  let shuttingDown = false;
+  const shutdown = async (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    app.log.info({ signal }, 'shutting down');
+    try {
+      await app.close();
+      process.exit(0);
+    } catch (error) {
+      app.log.error({ err: error }, 'error during shutdown');
+      process.exit(1);
+    }
+  };
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+
   try {
-    await app.listen({ port: PORT, host: HOST });
-    app.log.info(`TTSData API running on http://${HOST}:${PORT}`);
+    await app.listen({ port: config.port, host: config.host });
+    // Redacted configuration summary: no secret values.
+    app.log.info({ config: describeRuntimeConfig(config) }, 'TTSData API listening');
   } catch (err) {
     app.log.error(err);
     process.exit(1);
   }
 }
 
-main();
+// Only start when executed directly, so tests can import buildServer.
+if (require.main === module) {
+  void main();
+}
