@@ -61,6 +61,9 @@ const callbackQuerySchema = z.object({
   code: z.string().trim().min(1).max(4096).optional(),
   state: z.string().trim().min(1).max(512).optional(),
   error: z.string().trim().min(1).max(256).optional(),
+  // Accepted because the provider sends it on denial, but deliberately never
+  // read: it is untrusted text that can echo the authorization code.
+  error_description: z.string().trim().max(1024).optional(),
 }).strict();
 
 const enqueueSchema = z.object({ kind: z.enum(['profile_sync', 'video_sync']) }).strict();
@@ -231,17 +234,23 @@ export async function registerDisplayRoutes(app: FastifyInstance, options: Displ
   app.get('/callback', async (request, reply) => {
     const query = parse(callbackQuerySchema, request.query);
 
-    if (query.error) {
-      // Provider-side denial. Fail closed without touching any credential.
-      return reply.status(400).send({ error: 'PROVIDER_DENIED' });
+    // A denial callback is still a callback: it must be state-correlated,
+    // single-use, rate-limited and audited. A denial with no state cannot be
+    // correlated, so it is refused outright.
+    const isDenial = Boolean(query.error);
+    const stateParam = query.state;
+    if (!stateParam) {
+      return reply.status(400).send({ error: isDenial ? 'INVALID_STATE' : 'INVALID_CALLBACK' });
     }
-    if (!query.code || !query.state) {
+    const codeParam = query.code;
+    if (!isDenial && !codeParam) {
       return reply.status(400).send({ error: 'INVALID_CALLBACK' });
     }
 
-    // Consumption is atomic, replay-safe and tenant-bound. An unbound state
-    // (no workspace/user) is refused rather than trusted.
-    const consumed = await oauthRepository.consumeTenantBoundState(query.state);
+    // Consumption is atomic, replay-safe and tenant-bound, and happens for
+    // denials too — so a denied authorization cannot leave a reusable state.
+    // The provider error text is never consulted to authorize this.
+    const consumed = await oauthRepository.consumeTenantBoundState(stateParam);
     if (!consumed.success) {
       return reply.status(400).send({ error: 'INVALID_STATE', reason: consumed.error });
     }
@@ -252,8 +261,20 @@ export async function registerDisplayRoutes(app: FastifyInstance, options: Displ
     }
 
     await enforceRateLimit('authorization_callback', userId);
+
+    if (isDenial) {
+      // Sanitized audit only: the raw provider error is neither persisted,
+      // echoed, nor audited. No token exchange, no connection.
+      await repository.recordAudit({
+        workspaceId, userId,
+        action: 'authorization_callback', outcome: 'failure',
+        metadata: { reason: 'provider_denied' },
+      }).catch(() => undefined);
+      return reply.status(400).send({ error: 'PROVIDER_DENIED' });
+    }
+
     try {
-      const tokens = await adapter.exchangeAuthorizationCode(config, query.code);
+      const tokens = await adapter.exchangeAuthorizationCode(config, codeParam!);
       const scopes = assertAllApprovedScopesGranted(tokens.scopes);
       if (!tokens.providerAccountHashInput) {
         throw new DisplayApiError('Provider response omitted the account identity', 200, 'malformed_token_response');
