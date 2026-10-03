@@ -131,11 +131,32 @@ Authorization start: `POST /api/display/connections/authorize` (session-authenti
 
 ## Database and migrations
 
-Migrations live in `packages/db/drizzle` and are applied with Drizzle's migrator:
+Migrations live in `packages/db/drizzle` and are applied with Drizzle's migrator.
+
+**Authoritative production migration command** — run against the deployed image:
 
 ```bash
-DATABASE_URL=... pnpm --filter @ttsdata/db migrate
+docker run --rm \
+  -e DATABASE_URL="postgresql://..." \
+  <image> node packages/db/dist/src/migrate.js
 ```
+
+Or, inside an already-running deployment:
+
+```bash
+node packages/db/dist/src/migrate.js          # from /repo
+pnpm --filter @ttsdata/db migrate:production  # equivalent
+```
+
+The migrator is **compiled JavaScript** (`packages/db/dist/src/migrate.js`) and ships in
+the runtime image. `pnpm --filter @ttsdata/db migrate` (the `tsx` variant) is a
+**development-only** command: `tsx` is a devDependency, pruned from the runtime stage by
+`--prod`, so it cannot run inside the production image. The Dockerfile asserts the
+compiled migrator exists at build time, so an image that cannot migrate fails to build
+rather than failing at deploy.
+
+The migrations folder is resolved relative to the migrator module, so the command works
+from any working directory. Override with `MIGRATIONS_FOLDER` if needed.
 
 Migrations are **not** run automatically on container start: a rolling deploy would
 race several instances against the same migration. Run them as an explicit deploy step
@@ -205,13 +226,33 @@ untouched by this node and should be reconciled separately.
 
 ---
 
+## Container verification gate
+
+`scripts/verify-api-container.sh` proves the image is deployable, and runs in CI
+(`.github/workflows/api-container.yml`):
+
+1. builds both stages from the repository root;
+2. starts disposable PostgreSQL;
+3. runs `node packages/db/dist/src/migrate.js` **inside the image** and asserts tables were created;
+4. boots that exact image with production configuration;
+5. asserts `/health` and `/health/deep` report a real database round trip;
+6. asserts `/api/display/connections` returns **401** (registered and auth-protected; 404 would mean not deployed);
+7. asserts SIGTERM exits **0** (graceful shutdown);
+8. asserts no test secret is baked into the image and the runtime stage carries compiled JS only.
+
+```bash
+bash scripts/verify-api-container.sh
+```
+
+Uses disposable credentials only. No real provider or production database secret.
+
 ## Provisioning checklist (operator)
 
 - [ ] Create the backend service from `apps/api/Dockerfile`
 - [ ] Provision managed PostgreSQL; capture its connection string
 - [ ] Set every required variable from the environment contract above
 - [ ] Confirm the platform health check targets `/health`
-- [ ] Run `pnpm --filter @ttsdata/db migrate` against the production database
+- [ ] Run `node packages/db/dist/src/migrate.js` against the production database (see migrations above)
 - [ ] Register the TikTok redirect URI as `https://<api-origin>/api/display/callback`
 - [ ] Confirm the four Display scopes are granted
 - [ ] Set the frontend's API base URL to `API_ORIGIN`

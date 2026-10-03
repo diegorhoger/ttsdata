@@ -1,0 +1,35 @@
+name: API production container verification
+
+# Proves the Docker image this repository ships is actually deployable:
+# both build stages, the authoritative production migration command inside the
+# image against disposable PostgreSQL, boot of that exact image, health and
+# readiness with a real database round trip, the Display route surface, graceful
+# SIGTERM shutdown, and absence of baked-in secrets.
+#
+# Issue #57.
+
+on:
+  pull_request:
+    paths:
+      - 'apps/api/**'
+      - 'packages/**'
+      - 'scripts/verify-api-container.sh'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/api-container.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The gate drives `docker build` and disposable containers directly, so it
+      # needs no Node or pnpm setup: everything runs inside the image.
+      - name: Verify the production container end to end
+        run: bash scripts/verify-api-container.sh

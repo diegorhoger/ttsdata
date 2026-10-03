@@ -10,7 +10,8 @@
     "migrate": "tsx src/migrate.ts",
     "generate": "drizzle-kit generate",
     "verify:ccos-postgres": "node --import tsx scripts/verify-ccos-postgres.ts",
-    "studio": "drizzle-kit studio"
+    "studio": "drizzle-kit studio",
+    "migrate:production": "node dist/src/migrate.js"
   },
   "dependencies": {
     "@ttsdata/shared": "workspace:*",

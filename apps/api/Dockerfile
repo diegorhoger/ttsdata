@@ -62,13 +62,17 @@ COPY --from=build /repo/packages/db/dist packages/db/dist
 COPY --from=build /repo/packages/shared/dist packages/shared/dist
 COPY --from=build /repo/packages/data-quality/dist packages/data-quality/dist
 
-# Migrations ship with the image so a deploy can migrate without the source tree.
+# Migration SQL ships with the image. The migrator itself is compiled
+# JavaScript in packages/db/dist, so the runtime stage needs no TypeScript
+# tooling: `tsx` is a devDependency and is pruned by --prod, which would make a
+# `tsx`-based migration command unrunnable inside this image.
 COPY --from=build /repo/packages/db/drizzle packages/db/drizzle
-COPY --from=build /repo/packages/db/src/migrate.ts packages/db/src/migrate.ts
-COPY --from=build /repo/packages/db/src/schema.ts packages/db/src/schema.ts
-COPY --from=build /repo/packages/db/drizzle.config.ts packages/db/drizzle.config.ts
-COPY --from=build /repo/packages/db/tsconfig.json packages/db/tsconfig.json
 COPY --from=build /repo/packages/db/package.json packages/db/package.json
+
+# Fail the build if the production migration entrypoint is missing. This keeps
+# the documented migration command honest: the image must be able to run it.
+RUN test -f packages/db/dist/src/migrate.js \
+    || (echo "FATAL: packages/db/dist/src/migrate.js missing — the documented production migration command would not run" && exit 1)
 
 # Run unprivileged.
 USER node
