@@ -1,0 +1,19 @@
+# Never send secrets or local state into the build context.
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.local
+**/.env.*.local
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+**/.vitest-cache
+**/coverage
+.git
+.github
+docs
+github-issues
+fixtures
+*.log

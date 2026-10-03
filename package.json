@@ -17,7 +17,9 @@
     "db:generate": "pnpm --filter @ttsdata/db generate",
     "worker": "pnpm --filter @ttsdata/worker dev",
     "web": "pnpm --filter @ttsdata/web dev",
-    "api": "pnpm --filter @ttsdata/api dev"
+    "api": "pnpm --filter @ttsdata/api dev",
+    "verify:api-container": "bash scripts/verify-api-container.sh",
+    "db:migrate:production": "pnpm --filter @ttsdata/db migrate:production"
   },
   "devDependencies": {
     "turbo": "^2.0.0",

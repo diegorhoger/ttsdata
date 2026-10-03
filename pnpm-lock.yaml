@@ -32,6 +32,9 @@ importers:
       '@fastify/rate-limit':
         specifier: ^9.1.0
         version: 9.1.0
+      '@ttsdata/data-quality':
+        specifier: workspace:*
+        version: link:../../packages/data-quality
       '@ttsdata/db':
         specifier: workspace:*
         version: link:../../packages/db

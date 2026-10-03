@@ -2,15 +2,16 @@
   "name": "@ttsdata/db",
   "version": "0.1.0",
   "private": true,
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "migrate": "tsx src/migrate.ts",
     "generate": "drizzle-kit generate",
     "verify:ccos-postgres": "node --import tsx scripts/verify-ccos-postgres.ts",
-    "studio": "drizzle-kit studio"
+    "studio": "drizzle-kit studio",
+    "migrate:production": "node dist/src/migrate.js"
   },
   "dependencies": {
     "@ttsdata/shared": "workspace:*",
@@ -23,5 +24,23 @@
     "drizzle-kit": "^0.22.0",
     "tsx": "^4.7.0",
     "typescript": "^5.4.0"
-  }
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    },
+    "./src/schema": {
+      "types": "./dist/src/schema.d.ts",
+      "default": "./dist/src/schema.js"
+    },
+    "./src/*": {
+      "types": "./dist/src/*.d.ts",
+      "default": "./dist/src/*.js"
+    }
+  },
+  "files": [
+    "dist",
+    "drizzle"
+  ]
 }
