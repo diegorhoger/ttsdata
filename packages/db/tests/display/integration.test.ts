@@ -400,3 +400,116 @@ describe('OAuth state tenant binding', () => {
     expect(results.filter((item) => !item.success)[0].error).toBe('already_consumed');
   });
 });
+
+describe('OAuth state future-issued rejection (real repository)', () => {
+  /** Insert a state directly so issued_at can be placed in the future. */
+  async function insertState(options: {
+    rawState: string; sessionId: string; issuedAt: Date; expiresAt: Date;
+    workspaceId?: string; userId?: string;
+  }) {
+    await pool.query(
+      `INSERT INTO oauth_states (state_hash, session_hash, issued_at, expires_at, workspace_id, user_id)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [
+        oauthRepository['hashState'](options.rawState),
+        oauthRepository['hashSession'](options.sessionId),
+        options.issuedAt, options.expiresAt,
+        options.workspaceId ?? null, options.userId ?? null,
+      ],
+    );
+  }
+
+  async function consumedAtOf(rawState: string): Promise<Date | null> {
+    const row = await pool.query<{ consumed_at: Date | null }>(
+      `SELECT consumed_at FROM oauth_states WHERE state_hash = $1`,
+      [oauthRepository['hashState'](rawState)],
+    );
+    return row.rows[0]?.consumed_at ?? null;
+  }
+
+  it('rejects a future-dated tenant-bound state and does not consume it', async () => {
+    const rawState = 'future-tenant-' + randomUUID();
+    await insertState({
+      rawState, sessionId: 'session-1',
+      issuedAt: new Date(Date.now() + 10 * 60 * 1000),
+      expiresAt: new Date(Date.now() + 20 * 60 * 1000),
+      workspaceId: workspaceA, userId: userA,
+    });
+
+    const result = await oauthRepository.consumeTenantBoundState(rawState);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('future_issued');
+    // Not consumed: the record remains replayable by a legitimate clock, and
+    // more importantly was never marked as used by a rejected attempt.
+    expect(await consumedAtOf(rawState)).toBeNull();
+  });
+
+  it('rejects a future-dated session-bound state and does not consume it', async () => {
+    const rawState = 'future-session-' + randomUUID();
+    await insertState({
+      rawState, sessionId: 'session-future',
+      issuedAt: new Date(Date.now() + 10 * 60 * 1000),
+      expiresAt: new Date(Date.now() + 20 * 60 * 1000),
+    });
+
+    const viaAtomic = await oauthRepository.consumeStateAtomic(rawState, 'session-future');
+    expect(viaAtomic.success).toBe(false);
+    expect(viaAtomic.error).toBe('future_issued');
+
+    const viaLegacy = await oauthRepository.consumeState(rawState, 'session-future');
+    expect(viaLegacy.success).toBe(false);
+    expect(viaLegacy.error).toBe('future_issued');
+    expect(await consumedAtOf(rawState)).toBeNull();
+  });
+
+  it('tolerates issuance within the established skew allowance', async () => {
+    const rawState = 'skew-ok-' + randomUUID();
+    await insertState({
+      rawState, sessionId: 'session-skew',
+      issuedAt: new Date(Date.now() + 1_000),
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      workspaceId: workspaceA, userId: userA,
+    });
+
+    const result = await oauthRepository.consumeTenantBoundState(rawState);
+    expect(result.success).toBe(true);
+    expect(result.workspaceId).toBe(workspaceA);
+  });
+
+  it('still rejects a future-dated state that is also replayed', async () => {
+    const rawState = 'future-replay-' + randomUUID();
+    await insertState({
+      rawState, sessionId: 'session-1',
+      issuedAt: new Date(Date.now() + 10 * 60 * 1000),
+      expiresAt: new Date(Date.now() + 20 * 60 * 1000),
+      workspaceId: workspaceA, userId: userA,
+    });
+    const first = await oauthRepository.consumeTenantBoundState(rawState);
+    const second = await oauthRepository.consumeTenantBoundState(rawState);
+    expect(first.success).toBe(false);
+    expect(second.success).toBe(false);
+    expect(await consumedAtOf(rawState)).toBeNull();
+  });
+
+  it('preserves concurrent single-consumption for a valid state', async () => {
+    const rawState = 'concurrent-valid-' + randomUUID();
+    await oauthRepository.createState({
+      rawState, sessionId: 'session-1', expiresAt: new Date(Date.now() + 600000),
+      workspaceId: workspaceA, userId: userA,
+    });
+    const results = await Promise.all([
+      oauthRepository.consumeTenantBoundState(rawState),
+      oauthRepository.consumeTenantBoundState(rawState),
+    ]);
+    expect(results.filter((item) => item.success)).toHaveLength(1);
+  });
+
+  it('refuses to persist a state whose expiry precedes issuance', async () => {
+    await expect(oauthRepository.createState({
+      rawState: 'bad-expiry-' + randomUUID(), sessionId: 'session-1',
+      expiresAt: new Date(Date.now() - 1000),
+      workspaceId: workspaceA, userId: userA,
+    })).rejects.toThrow(/expiry/i);
+  });
+});

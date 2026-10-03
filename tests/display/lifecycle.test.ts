@@ -222,16 +222,87 @@ describe('B. callback state rejection', () => {
     expect(response.json()).toMatchObject({ error: 'VALIDATION_ERROR' });
   });
 
-  it('fails closed when the provider denies', async () => {
-    const { app, repository } = await buildApp();
+  it('refuses a denial callback that carries no state', async () => {
+    const { app, repository, oauthRepository } = await buildApp();
     apps.push(app);
     const response = await app.inject({ method: 'GET', url: '/api/display/callback?error=access_denied' });
     expect(response.statusCode).toBe(400);
-    expect(response.json()).toMatchObject({ error: 'PROVIDER_DENIED' });
+    expect(response.json()).toMatchObject({ error: 'INVALID_STATE' });
+    // Uncorrelated denial never reaches state consumption or any provider call.
+    expect(oauthRepository.consumeTenantBoundState).not.toHaveBeenCalled();
     expect(repository.createConnection).not.toHaveBeenCalled();
   });
 
-  for (const reason of ['state_not_found', 'already_consumed', 'expired', 'session_mismatch'] as const) {
+  it('consumes state on a denial callback, rate-limits and audits without echoing the provider error', async () => {
+    const { app, repository, oauthRepository } = await buildApp();
+    apps.push(app);
+    const state = 'a'.repeat(64);
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/display/callback?error=access_denied&error_description=${encodeURIComponent('user_refused: code=leaky')}&state=${state}`,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: 'PROVIDER_DENIED' });
+    // State was correlated and consumed exactly once.
+    expect(oauthRepository.consumeTenantBoundState).toHaveBeenCalledWith(state);
+    // The callback participated in rate limiting and audit for the resolved tenant.
+    expect(repository.recordAudit).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: WORKSPACE_ID, userId: USER_ID,
+      action: 'authorization_callback', outcome: 'failure',
+      metadata: { reason: 'provider_denied' },
+    }));
+    // No raw provider error text anywhere in the response or the audit payload.
+    expect(response.body).not.toContain('access_denied');
+    expect(response.body).not.toContain('user_refused');
+    expect(JSON.stringify(repository.recordAudit.mock.calls)).not.toContain('access_denied');
+    expect(JSON.stringify(repository.recordAudit.mock.calls)).not.toContain('user_refused');
+    // No exchange, no credentials.
+    expect(repository.createConnection).not.toHaveBeenCalled();
+  });
+
+  it('does not reuse a state after a denial callback', async () => {
+    const oauthRepository = createOAuthRepository();
+    oauthRepository.consumeTenantBoundState
+      .mockResolvedValueOnce({ success: true, consumedAt: NOW, workspaceId: WORKSPACE_ID, userId: USER_ID })
+      .mockResolvedValueOnce({ success: false, error: 'already_consumed' });
+    const { app, repository } = await buildApp({ oauthRepository });
+    apps.push(app);
+    const state = 'b'.repeat(64);
+
+    const denial = await app.inject({ method: 'GET', url: `/api/display/callback?error=access_denied&state=${state}` });
+    const replay = await app.inject({
+      method: 'GET', url: `/api/display/callback?code=${AUTHORIZATION_CODE}&state=${state}`,
+    });
+
+    expect(denial.statusCode).toBe(400);
+    expect(replay.statusCode).toBe(400);
+    expect(replay.json()).toMatchObject({ error: 'INVALID_STATE', reason: 'already_consumed' });
+    expect(repository.createConnection).not.toHaveBeenCalled();
+  });
+
+  it('rate-limits a denial callback', async () => {
+    const limiter = createLimiter(false);
+    const { app, repository } = await buildApp({ limiter });
+    apps.push(app);
+    const response = await app.inject({
+      method: 'GET', url: `/api/display/callback?error=access_denied&state=${'c'.repeat(64)}`,
+    });
+    expect(response.statusCode).toBe(429);
+    expect(limiter.consume).toHaveBeenCalledWith('authorization_callback', USER_ID);
+    expect(repository.recordAudit).not.toHaveBeenCalled();
+  });
+
+  it('never calls the token endpoint on a denial', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(200, tokenPayload()));
+    const adapter = new DisplayApiAdapter(fetchImpl);
+    const { app } = await buildApp({ adapter });
+    apps.push(app);
+    await app.inject({ method: 'GET', url: `/api/display/callback?error=access_denied&state=${'d'.repeat(64)}` });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  for (const reason of ['state_not_found', 'already_consumed', 'expired', 'session_mismatch', 'future_issued'] as const) {
     it(`fails closed on ${reason} and never reaches the provider`, async () => {
       const { response, repository, adapter } = await rejection({ error: reason });
       expect(response.statusCode).toBe(400);
