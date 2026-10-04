@@ -246,9 +246,40 @@ bash scripts/verify-api-container.sh
 
 Uses disposable credentials only. No real provider or production database secret.
 
+## Railway deployment
+
+`railway.json` at the repository root declares the container build and health check, so
+Railway builds from the same Dockerfile the container gate verifies:
+
+| Setting | Value |
+|---|---|
+| Builder | Dockerfile (`apps/api/Dockerfile`), built from the repository root |
+| Start command | **not overridden** — the image's own `CMD ["node","dist/server.js"]` |
+| Health check | `/health`, 120s timeout |
+| Restart policy | on failure, max 5 retries |
+
+The start command is deliberately **not** declared in `railway.json`. A platform
+`startCommand` replaces the Dockerfile `CMD` and runs from the image `WORKDIR`
+(`/repo/apps/api`), so a repository-relative path such as `node apps/api/dist/server.js`
+would resolve to `/repo/apps/api/apps/api/dist/server.js` — which does not exist. The
+image `CMD` is already the entrypoint the container gate verifies; overriding it would
+replace a verified value with an unverified one.
+
+Managed PostgreSQL is provisioned in the same Railway project. `DATABASE_URL` is
+supplied by Railway; the internal service hostname (`*.railway.internal`) is accepted by
+the committed configuration validators, and `ALLOW_LOCALHOST_DATABASE` must **not** be
+set.
+
+The public origin is `https://<service>.up.railway.app`. Set `API_ORIGIN` and
+`OAUTH_CANONICAL_ORIGIN` to it, and register
+`https://<service>.up.railway.app/api/display/callback` in the TikTok Developer Portal.
+
+**Railway provides HTTPS on the assigned domain.** Custom domains are optional and not
+required for the probe.
+
 ## Provisioning checklist (operator)
 
-- [ ] Create the backend service from `apps/api/Dockerfile`
+- [ ] Create the Railway project and service (Railway reads `railway.json`)
 - [ ] Provision managed PostgreSQL; capture its connection string
 - [ ] Set every required variable from the environment contract above
 - [ ] Confirm the platform health check targets `/health`
