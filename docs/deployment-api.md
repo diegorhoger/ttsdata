@@ -254,9 +254,16 @@ Railway builds from the same Dockerfile the container gate verifies:
 | Setting | Value |
 |---|---|
 | Builder | Dockerfile (`apps/api/Dockerfile`), built from the repository root |
-| Start command | `node apps/api/dist/server.js` |
+| Start command | **not overridden** — the image's own `CMD ["node","dist/server.js"]` |
 | Health check | `/health`, 120s timeout |
 | Restart policy | on failure, max 5 retries |
+
+The start command is deliberately **not** declared in `railway.json`. A platform
+`startCommand` replaces the Dockerfile `CMD` and runs from the image `WORKDIR`
+(`/repo/apps/api`), so a repository-relative path such as `node apps/api/dist/server.js`
+would resolve to `/repo/apps/api/apps/api/dist/server.js` — which does not exist. The
+image `CMD` is already the entrypoint the container gate verifies; overriding it would
+replace a verified value with an unverified one.
 
 Managed PostgreSQL is provisioned in the same Railway project. `DATABASE_URL` is
 supplied by Railway; the internal service hostname (`*.railway.internal`) is accepted by
