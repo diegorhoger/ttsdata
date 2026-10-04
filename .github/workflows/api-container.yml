@@ -15,6 +15,7 @@ on:
       - 'packages/**'
       - 'scripts/verify-api-container.sh'
       - 'pnpm-lock.yaml'
+      - 'railway.json'
       - '.github/workflows/api-container.yml'
   workflow_dispatch:
 
