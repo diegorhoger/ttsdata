@@ -737,3 +737,144 @@ describe('L. preserved security guarantees', () => {
     expect(response.json()).toMatchObject({ error: 'CAPABILITY_VIOLATION' });
   });
 });
+
+describe('B2. TikTok documented successful callback shape (live-observed)', () => {
+  /**
+   * Shape observed from a real TikTok Web Login Kit callback during the live
+   * Display probe:
+   *   /api/display/callback?code=<redacted>&state=<redacted>&scopes=<comma-list>
+   * Query-key set: ["code","scopes","state"]
+   *
+   * The live authorization code, state and any tokens are deliberately NOT
+   * reproduced here. Only the parameter SHAPE is.
+   */
+  const OBSERVED_SHAPE = {
+    code: 'fixture-authorization-code',
+    state: 'a'.repeat(64),
+    scopes: 'user.info.basic,user.info.stats,video.list',
+  };
+
+  it('accepts the documented code + scopes + state callback', async () => {
+    const { app, repository } = await buildApp();
+    apps.push(app);
+
+    const qs = new URLSearchParams(OBSERVED_SHAPE).toString();
+    const response = await app.inject({ method: 'GET', url: `/api/display/callback?${qs}` });
+
+    // Must not be a validation failure — that was the live defect.
+    expect(response.statusCode).not.toBe(400);
+    expect(response.body).not.toContain('VALIDATION_ERROR');
+    // It should reach orchestration and create the connection.
+    expect(response.statusCode).toBe(201);
+    expect(repository.createConnection).toHaveBeenCalled();
+  });
+
+  it('still rejects a genuinely unknown callback parameter', async () => {
+    const { app, repository } = await buildApp();
+    apps.push(app);
+
+    const qs = new URLSearchParams({ ...OBSERVED_SHAPE, unexpected_param: 'x' }).toString();
+    const response = await app.inject({ method: 'GET', url: `/api/display/callback?${qs}` });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: 'VALIDATION_ERROR' });
+    expect(repository.createConnection).not.toHaveBeenCalled();
+  });
+
+  it('rejects an oversized scopes parameter', async () => {
+    const { app, repository } = await buildApp();
+    apps.push(app);
+
+    const qs = new URLSearchParams({ ...OBSERVED_SHAPE, scopes: 'a'.repeat(2000) }).toString();
+    const response = await app.inject({ method: 'GET', url: `/api/display/callback?${qs}` });
+
+    expect(response.statusCode).toBe(400);
+    expect(repository.createConnection).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before the token exchange when callback scopes omit a required scope', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(200, tokenPayload()));
+    const adapter = new DisplayApiAdapter(fetchImpl);
+    const { app, repository } = await buildApp({ adapter });
+    apps.push(app);
+
+    // User granted only a subset: the provider says so on the callback.
+    const qs = new URLSearchParams({
+      code: 'fixture-authorization-code',
+      state: 'a'.repeat(64),
+      scopes: 'user.info.basic',
+    }).toString();
+    const response = await app.inject({ method: 'GET', url: `/api/display/callback?${qs}` });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: 'CAPABILITY_VIOLATION' });
+    // The exchange must not have been attempted at all.
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(repository.createConnection).not.toHaveBeenCalled();
+  });
+
+  it('still validates the token response scopes (callback scopes are additive, not a replacement)', async () => {
+    // Callback claims all scopes granted, but the token response disagrees.
+    const adapter = new DisplayApiAdapter(vi.fn().mockResolvedValue(
+      jsonResponse(200, tokenPayload({ scope: 'user.info.basic' })),
+    ));
+    const { app, repository } = await buildApp({ adapter });
+    apps.push(app);
+
+    const qs = new URLSearchParams(OBSERVED_SHAPE).toString();
+    const response = await app.inject({ method: 'GET', url: `/api/display/callback?${qs}` });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: 'CAPABILITY_VIOLATION' });
+    expect(repository.createConnection).not.toHaveBeenCalled();
+  });
+
+  it('consumes state exactly once for the documented shape', async () => {
+    const oauthRepository = createOAuthRepository();
+    oauthRepository.consumeTenantBoundState
+      .mockResolvedValueOnce({ success: true, consumedAt: NOW, workspaceId: WORKSPACE_ID, userId: USER_ID })
+      .mockResolvedValueOnce({ success: false, error: 'already_consumed' });
+    const { app, repository } = await buildApp({ oauthRepository });
+    apps.push(app);
+
+    const qs = new URLSearchParams(OBSERVED_SHAPE).toString();
+    const first = await app.inject({ method: 'GET', url: `/api/display/callback?${qs}` });
+    const replay = await app.inject({ method: 'GET', url: `/api/display/callback?${qs}` });
+
+    expect(first.statusCode).toBe(201);
+    expect(replay.statusCode).toBe(400);
+    expect(replay.json()).toMatchObject({ reason: 'already_consumed' });
+    expect(repository.createConnection).toHaveBeenCalledTimes(1);
+  });
+
+  it('makes zero provider calls for invalid state even with valid-looking scopes', async () => {
+    const oauthRepository = createOAuthRepository();
+    oauthRepository.consumeTenantBoundState.mockResolvedValueOnce({ success: false, error: 'expired' });
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(200, tokenPayload()));
+    const adapter = new DisplayApiAdapter(fetchImpl);
+    const { app, repository } = await buildApp({ oauthRepository, adapter });
+    apps.push(app);
+
+    const qs = new URLSearchParams(OBSERVED_SHAPE).toString();
+    const response = await app.inject({ method: 'GET', url: `/api/display/callback?${qs}` });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ reason: 'expired' });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(repository.createConnection).not.toHaveBeenCalled();
+  });
+
+  it('does not leak the code, state or scopes into the response or audit', async () => {
+    const { app, repository } = await buildApp();
+    apps.push(app);
+
+    const qs = new URLSearchParams(OBSERVED_SHAPE).toString();
+    const response = await app.inject({ method: 'GET', url: `/api/display/callback?${qs}` });
+
+    expect(response.body).not.toContain(OBSERVED_SHAPE.code);
+    expect(response.body).not.toContain(OBSERVED_SHAPE.state);
+    const audit = JSON.stringify(repository.recordAudit.mock.calls);
+    expect(audit).not.toContain(OBSERVED_SHAPE.code);
+    expect(audit).not.toContain(OBSERVED_SHAPE.state);
+  });
+});

@@ -56,11 +56,25 @@ const authorizeSchema = z.object({}).strict();
 /** Refresh takes no client input: the credential comes from server storage. */
 const refreshSchema = z.object({}).strict();
 
-/** The callback carries only provider callback material. */
+/**
+ * The callback carries only provider callback material.
+ *
+ * TikTok's Web Login Kit documents three successful-callback parameters:
+ * `code`, `scopes`, and `state`. `scopes` is the comma-separated set of scopes
+ * the USER granted, which can be a strict subset of what was requested. It is
+ * declared here (rather than left to `.strict()` rejection) because the live
+ * probe observed TikTok sending it; a strict schema without it fails closed on
+ * a legitimate successful callback.
+ *
+ * `.strict()` is retained: genuinely unknown parameters are still rejected.
+ */
 const callbackQuerySchema = z.object({
   code: z.string().trim().min(1).max(4096).optional(),
   state: z.string().trim().min(1).max(512).optional(),
-  error: z.string().trim().min(1).max(256).optional(),
+  // Bounded: a comma-separated scope list. 1024 chars is far above any real
+  // scope set and keeps the parameter from being an unbounded input.
+  scopes: z.string().trim().max(1024).optional(),
+  error: z.string().trim().max(256).optional(),
   // Accepted because the provider sends it on denial, but deliberately never
   // read: it is untrusted text that can echo the authorization code.
   error_description: z.string().trim().max(1024).optional(),
@@ -274,7 +288,21 @@ export async function registerDisplayRoutes(app: FastifyInstance, options: Displ
     }
 
     try {
+      // Defense in depth, part 1: if the provider told us on the callback which
+      // scopes the user granted, require them to satisfy the Display contract
+      // BEFORE spending a token exchange. A user may grant a subset of what was
+      // requested, and that must fail closed here rather than persist a
+      // connection that cannot serve the probe.
+      const callbackScopes = query.scopes
+        ? query.scopes.split(',').map((s) => s.trim()).filter(Boolean)
+        : null;
+      if (callbackScopes) {
+        assertAllApprovedScopesGranted(callbackScopes);
+      }
+
       const tokens = await adapter.exchangeAuthorizationCode(config, codeParam!);
+      // Defense in depth, part 2: the token response is still authoritative for
+      // what was actually granted. Callback scopes do NOT replace this check.
       const scopes = assertAllApprovedScopesGranted(tokens.scopes);
       if (!tokens.providerAccountHashInput) {
         throw new DisplayApiError('Provider response omitted the account identity', 200, 'malformed_token_response');
