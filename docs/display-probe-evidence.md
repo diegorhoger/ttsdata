@@ -84,7 +84,7 @@ A controlled authenticated TikTok Display observation was performed. Row-level m
 | # | Claim | Previous | Candidate | Supporting fixture | Limitation |
 |---|---|---|---|---|---|
 | A1 | OAuth lifecycle orchestration (our code) | CODE_VERIFIED | CODE_VERIFIED | — | unchanged |
-| A2 | live start → provider → callback | DOC_VERIFIED | **PROBE_VERIFIED** | — (audit record) | — |
+| A2 | live start -> provider -> callback | DOC_VERIFIED | **PROBE_VERIFIED** | — (audit record) | — |
 | A3 | authorization-code exchange succeeded | DOC_VERIFIED | **PROBE_VERIFIED** | — (audit `authorization_callback: success`) | — |
 | A4 | granted scope set | SCOPE_AVAILABLE | **PROBE_VERIFIED** | — | all three granted |
 | A5 | complete key+secret pair | NOT_OBSERVED | **PROBE_VERIFIED** | — | provider accepted the exchange |
@@ -93,9 +93,9 @@ A controlled authenticated TikTok Display observation was performed. Row-level m
 | B3 | `user.info.profile` fields | DOC_VERIFIED | **NOT_GRANTED** | — | scope not granted |
 | C1 | `POST /v2/video/list/` request shape | DOC_VERIFIED | **PROBE_VERIFIED** | video-list.sanitized.json | — |
 | C2 | video-list envelope | DOC_VERIFIED | **PROBE_VERIFIED** | video-list.sanitized.json | — |
-| C3 | cursor advancement across ≥2 pages | NOT_OBSERVED | **PROBE_VERIFIED** | video-list.sanitized.json (`paginationObservation`) | — |
+| C3 | cursor advancement across >=2 pages | NOT_OBSERVED | **PROBE_VERIFIED** | video-list.sanitized.json (`paginationObservation`) | — |
 | C4 | `has_more` behaviour | DOC_VERIFIED | **PROBE_VERIFIED** | video-list.sanitized.json | true on both pages |
-| C5 | `max_count` documented maximum | DOC_VERIFIED | **PROBE_VERIFIED** | max-count-boundary.sanitized.json | 50 → 400 |
+| C5 | `max_count` documented maximum | DOC_VERIFIED | **PROBE_VERIFIED** | max-count-boundary.sanitized.json | 50 -> 400 |
 | D1 | video field set (13 fields) | DOC_VERIFIED | **PROBE_VERIFIED** | video-list.sanitized.json | — |
 | E1 | cover-image URL lifetime | DOC_VERIFIED | DOC_VERIFIED | — | not re-confirmed (L2) |
 | F1 | provider error-envelope shape | DOC_VERIFIED | **PROBE_VERIFIED** | max-count-boundary.sanitized.json | — |
@@ -105,77 +105,64 @@ A2, A3, A4, A5 (4) + B1, B2 (2) + C1, C2, C3, C4, C5 (5) + D1 (1) + F1 (1) = **1
 A1 remains CODE_VERIFIED. B3 is NOT_GRANTED. E1 remains DOC_VERIFIED.
 No row was promoted without a live observation.
 
-### Pagination — substantiated by the fixture
+### Pagination evidence
 
-`fixtures/display/video-list.sanitized.json` → `paginationObservation`:
-`page1Count: 20`, `page2Count: 20`, `idOverlapBetweenPages: 0`,
-`cursorChangedBetweenPages: true`. Page 2 was requested using page 1's cursor.
-Both pages report `has_more: true`.
+`fixtures/display/video-list.sanitized.json` records a **fingerprint for every
+observed item** on each page, plus a fingerprint for each page's cursor. Pagination
+is therefore **recomputable from the committed artifact** rather than asserted:
 
-### Redaction convention
+| Derived fact | Method |
+|---|---|
+| page 1 item count | `len(page1...itemFingerprints)` |
+| page 2 item count | `len(page2...itemFingerprints)` |
+| cross-page overlap | `len(set(p1) & set(p2))` |
+| cursor advanced | `p1.cursorFingerprint != p2.cursorFingerprint` |
+| page 2 continuity | `page2.request.cursorFingerprint == page1.cursorFingerprint` |
+| `has_more` | read from each page's `has_more` |
 
-Identifiers, names and URLs → `<REDACTED>`. Numeric metrics → `<NUMBER>`.
+The `paginationObservation` block states the derived result for the matrix, but the
+validator **recomputes** it from the fingerprints and fails if they disagree.
 
-`<NUMBER>` is used deliberately instead of `0`: **0 is a meaningful value** for
-`follower_count`, `view_count`, `create_time` and `cursor`, so substituting 0 would
-assert something the observation did not. `<NUMBER>` proves a value of the correct
-TYPE was present without inventing a magnitude.
+**Fingerprint method.** HMAC-SHA256 over domain-separated inputs — `item:<id>` and
+`cursor:<cursor>` — using a **fresh 32-byte random salt generated for this capture
+and destroyed immediately afterwards**. The salt is not committed, not logged, not
+in PR text, and not retained. Without the salt the digests are non-reversible.
+Domain separation prevents an item value and a cursor value from producing
+interchangeable evidence. Only 24 hex characters are retained, which is ample for
+equality and intersection testing while further reducing any lookup surface.
+
+**Consequence, stated honestly:** because the salt is destroyed, a third party
+cannot recompute these fingerprints from raw provider data. They can verify
+*internal consistency* — counts, disjointness, cursor advancement — which is what
+the pagination claim requires. They cannot independently re-derive the same digests.
+
+### Redaction semantics
+
+Two distinct things are recorded, and they must not be conflated:
+
+- **Fixture representation** — identifiers/names/URLs become the JSON string
+  `<REDACTED>`; numeric metrics become the JSON string `<NUMBER>`.
+- **Provider-observed original type** — recorded separately as evidence metadata in
+  each fixture's `_observedTypes` block, because replacing a JSON number with a JSON
+  string does NOT preserve the provider's original JSON type.
+
+The fixture therefore does not claim that `<NUMBER>` *is* a number. It claims the
+observed value was a number, recorded as metadata.
 
 ### Absence is recorded as absence
 
 **Not observed in the profile response:** `union_id`, `avatar_url_100`, `avatar_large_url`.
 **Not observed in the video response:** `is_aigc`, `embed_link`.
-These are recorded as absent — not `null`, not `0`, not empty string, and not added to
-any fixture to satisfy a schema.
+These are absent from the fixtures — not `null`, not `0`, not empty string, and not
+added to satisfy a schema.
 
 ### Sanitized fixtures
 
 - `fixtures/display/user-info.sanitized.json`
-- `fixtures/display/video-list.sanitized.json` (both pages + pagination observation)
+- `fixtures/display/video-list.sanitized.json` (both pages, fingerprints, pagination)
 - `fixtures/display/max-count-boundary.sanitized.json` (400 + error envelope)
 
 No tokens, authorization codes, OAuth state, account identifiers, PII, or live CDN URLs.
-
----|---|---|---|
-| A1 | TTSData Display OAuth lifecycle orchestration | `CODE_VERIFIED` | unchanged |
-| A2 | Live TikTok start → provider → callback | **`PROBE_VERIFIED`** | consent granted; callback carried `code`,`scopes`,`state` |
-| A3 | Authorization-code exchange | **`PROBE_VERIFIED`** | audit `authorization_callback: success`; connection persisted |
-| A4 | Granted scope set | **`PROBE_VERIFIED`** | `user.info.basic, user.info.stats, video.list` — **all three granted** |
-| A5 | Complete key+secret credential pair | **`PROBE_VERIFIED`** | exchange succeeded with `client_secret` |
-| B1 | `GET /v2/user/info/` returns 200 + data envelope | **`PROBE_VERIFIED`** | HTTP 200; envelope `{data,error}` |
-| B2 | Profile field set under granted scopes | **`PROBE_VERIFIED`** | see below |
-| B3 | `user.info.profile` fields (`username`,`bio_description`,`is_verified`,`profile_deep_link`) | **`NOT_GRANTED`** | scope not granted; fields absent |
-| C1 | `POST /v2/video/list/` accepted request shape | **`PROBE_VERIFIED`** | HTTP 200 with `max_count` |
-| C2 | Video-list response envelope | **`PROBE_VERIFIED`** | `{data:{videos,cursor,has_more},error}` |
-| C3 | `cursor` advancement across ≥2 pages | **`PROBE_VERIFIED`** | page1→page2, **0 id overlap**, cursor is a number |
-| C4 | `has_more` behaviour | **`PROBE_VERIFIED`** | `true` on both pages observed |
-| C5 | `max_count` documented maximum | **`PROBE_VERIFIED`** | `50` → HTTP 400 `invalid_params`: "max_count needs to be in the range of [1, 20]" |
-| D1 | Video field set under granted scope | **`PROBE_VERIFIED`** | see below |
-| E1 | Cover-image URL lifetime | `DOC_VERIFIED` | not re-confirmed; see L2 |
-| F1 | Provider error-envelope shape | **`PROBE_VERIFIED`** | `{error:{code,message,log_id}}` |
-
-**Observed profile fields** (`GET /v2/user/info/`): `open_id`, `display_name`,
-`avatar_url`, `follower_count`, `following_count`, `likes_count`, `video_count`.
-Types: `open_id`/`display_name`/`avatar_url` = string; the four counts = number.
-
-**Observed video fields** (`POST /v2/video/list/`): `id`, `title`,
-`video_description`, `create_time`, `cover_image_url`, `share_url`, `duration`,
-`height`, `width`, `like_count`, `comment_count`, `share_count`, `view_count`.
-Types: `id`/`title`/`video_description`/`cover_image_url`/`share_url` = string;
-`create_time`/`duration`/`height`/`width`/the four counts = number.
-
-**Not observed:** `union_id`, `avatar_url_100`, `avatar_large_url`, `is_aigc`,
-`embed_link`. Absence is recorded as absence — not zero, not fabricated.
-
-**Sanitized fixtures:** `fixtures/display/user-info.sanitized.json`,
-`fixtures/display/video-list.sanitized.json`,
-`fixtures/display/error-envelope.sanitized.json`. Values redacted; structure and
-types preserved. No tokens, codes, states, account identifiers, PII or live CDN URLs.
-
-**`PROBE_VERIFIED` count: 14.** Every entry above was observed in a controlled
-authenticated call; nothing was promoted from documentation or code.
-
----
 
 ## Limitations
 
