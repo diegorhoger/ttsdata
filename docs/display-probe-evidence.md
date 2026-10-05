@@ -80,17 +80,17 @@ about what TikTok returns.
 ### LIVE PROBE RESULTS (2026-10-05)
 
 A controlled authenticated TikTok Display observation was performed. The matrix and the
-count below are **generated from `fixtures/display/classification.json`**, which is the
-authoritative structured classification source. The validator derives the count from that
-file, so the document cannot drift from the rows.
+count below are **generated from `fixtures/display/classification.json`**, the authoritative
+structured classification source. The validator derives the count from that file and fails
+if the document disagrees, so the count cannot drift from the rows.
 
 | # | Claim | Previous | Current | Supporting fixture | Limitation |
 |---|---|---|---|---|---|
 | A1 | OAuth lifecycle orchestration (our code) | CODE_VERIFIED | CODE_VERIFIED | — | unchanged |
 | A2 | live start -> provider -> callback | DOC_VERIFIED | **PROBE_VERIFIED** | `oauth-audit.sanitized.json` | — |
-| A3 | authorization-code exchange succeeded | DOC_VERIFIED | **PROBE_VERIFIED** | `oauth-audit.sanitized.json` | — |
+| A3 | authorization-code exchange succeeded | DOC_VERIFIED | CODE_VERIFIED | `oauth-audit.sanitized.json` | exchange inferred from local durable state (callback success + active connection); the provider's exchange response is not retained, so this is not an independent provider observation |
 | A4 | granted scope set | SCOPE_AVAILABLE | **PROBE_VERIFIED** | `oauth-audit.sanitized.json` | all three granted |
-| A5 | complete key+secret pair | NOT_OBSERVED | **PROBE_VERIFIED** | `oauth-audit.sanitized.json` | — |
+| A5 | complete key+secret pair | NOT_OBSERVED | CODE_VERIFIED | `oauth-audit.sanitized.json` | provider acceptance of the client credential is inferred from the same local durable state; no retained provider receipt |
 | B1 | GET /v2/user/info/ 200 + envelope | DOC_VERIFIED | **PROBE_VERIFIED** | `user-info.sanitized.json` | — |
 | B2 | profile field set (7 fields) | DOC_VERIFIED | **PROBE_VERIFIED** | `user-info.sanitized.json` | — |
 | B3 | user.info.profile fields | DOC_VERIFIED | NOT_GRANTED | — | scope not granted |
@@ -103,19 +103,27 @@ file, so the document cannot drift from the rows.
 | E1 | cover-image URL lifetime | DOC_VERIFIED | DOC_VERIFIED | — | not re-confirmed (L2) |
 | F1 | provider error-envelope shape | DOC_VERIFIED | **PROBE_VERIFIED** | `max-count-boundary.sanitized.json` | — |
 
-**PROBE_VERIFIED count = 13**, reconciled arithmetically: 4 + 2 + 5 + 1 + 1 = **13**.
-A1 remains CODE_VERIFIED. B3 is NOT_GRANTED. E1 remains DOC_VERIFIED.
-No row was promoted without durable supporting evidence in this package.
+**PROBE_VERIFIED count = 11**, reconciled arithmetically: 1 + 1 + 2 + 5 + 1 + 1 = **11**.
+A1 and A3/A5 are CODE_VERIFIED. B3 is NOT_GRANTED. E1 remains DOC_VERIFIED.
 
-### Durable support for the OAuth rows (A2-A5)
+### A3 and A5 are deliberately NOT PROBE_VERIFIED
 
-`fixtures/display/oauth-audit.sanitized.json` substantiates A2-A5 from the
-`display_audit` table and the persisted connection row produced by the live run.
+The provider's authorization-code exchange response is **not retained**. Callback success
+plus an active persisted connection are durable **local execution** evidence from which a
+completed exchange is inferred through the committed code path. That is stronger than
+documentation but weaker than a retained provider observation, so both rows are
+`CODE_VERIFIED` with the basis recorded, rather than promoted.
 
-**Honest limitation:** the exchange's own provider response is not committed. A3/A5 are
-substantiated by the callback reaching `outcome: success`, which in the committed code
-path is unreachable without a completed authorization-code exchange. That is durable
-local evidence, not an independent provider receipt, and the fixture says so.
+**A2** (live start -> provider -> callback) and **A4** (granted scope set) remain
+`PROBE_VERIFIED`: the callback itself was observed, and the granted scope set is recorded
+in the persisted connection outcome.
+
+### Fixture-backed invariant
+
+Every `PROBE_VERIFIED` row must name a fixture that exists **and** passes fixture-specific
+structural validation. The validator fails otherwise, so an unsupported promotion cannot
+enter `classification.json` silently. This enforces durable committed support; it does
+**not** claim cryptographic provider provenance.
 
 ### Pagination evidence
 
