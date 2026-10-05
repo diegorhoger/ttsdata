@@ -118,6 +118,37 @@ DISPLAY_STATUS="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${APP
 [ "$DISPLAY_STATUS" = "401" ] || fail "expected 401 from the Display route (404 would mean it is not deployed), got $DISPLAY_STATUS"
 pass "/api/display/connections -> 401 (registered, auth enforced)"
 
+# A 401 only proves the route exists and rejects anonymous callers. It does not
+# prove authentication WORKS. Seed a real session and exercise the authenticated
+# path against the production artifact.
+SESSION_TOKEN="$(openssl rand -hex 32)"
+WS_ID="$(uuidgen | tr 'A-Z' 'a-z')"
+USER_ID="$(uuidgen | tr 'A-Z' 'a-z')"
+
+docker exec -i "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DATABASE" -v ON_ERROR_STOP=1 -q <<SQL
+INSERT INTO workspaces (id, name, plan_code) VALUES ('$WS_ID', 'Container Gate WS', 'pro');
+INSERT INTO users (id, workspace_id, email, password_hash, role)
+  VALUES ('$USER_ID', '$WS_ID', 'gate@ttsdata.local', 'x', 'owner');
+INSERT INTO sessions (user_id, token, expires_at)
+  VALUES ('$USER_ID', '$SESSION_TOKEN', NOW() + INTERVAL '1 hour');
+SQL
+
+AUTH_STATUS="$(curl -s -o /dev/null -w '%{http_code}' \
+  -H "Cookie: session=${SESSION_TOKEN}" \
+  "http://127.0.0.1:${APP_PORT}/api/display/connections")"
+[ "$AUTH_STATUS" = "200" ] || { docker logs "$APP_CONTAINER" 2>&1 | tail -20; fail "authenticated request returned $AUTH_STATUS, expected 200 (a 500 here means session resolution is broken)"; }
+pass "/api/display/connections with a valid session -> 200 (authentication works, not just enforced)"
+
+ME_BODY="$(curl -s -H "Cookie: session=${SESSION_TOKEN}" "http://127.0.0.1:${APP_PORT}/api/auth/me")"
+echo "$ME_BODY" | grep -q "$USER_ID" || fail "/api/auth/me did not resolve the seeded user: $ME_BODY"
+pass "/api/auth/me resolved the correct user identity from a real session"
+
+UNKNOWN_STATUS="$(curl -s -o /dev/null -w '%{http_code}' \
+  -H "Cookie: session=$(openssl rand -hex 32)" \
+  "http://127.0.0.1:${APP_PORT}/api/display/connections")"
+[ "$UNKNOWN_STATUS" = "401" ] || fail "unknown session returned $UNKNOWN_STATUS, expected 401"
+pass "unknown session -> 401 (fails closed)"
+
 echo "7/8 Proving graceful SIGTERM shutdown..."
 docker stop -t 20 "$APP_CONTAINER" >/dev/null
 EXIT_CODE="$(docker inspect -f '{{.State.ExitCode}}' "$APP_CONTAINER")"

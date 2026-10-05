@@ -30,3 +30,7 @@ logs/
 *.log
 npm-debug.log*
 apps/web/tsconfig.tsbuildinfo
+
+# Local probe runtime secrets (Issue #59) — must never be committed
+.env.probe
+.probe-session
