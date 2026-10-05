@@ -296,6 +296,29 @@ implemented.
 
 ---
 
+## Traceability
+
+This section is informational provenance only. It does not alter the evidence
+classification in `fixtures/display/classification.json`.
+
+| Item | Value |
+|---|---|
+| **Governing probe issue** | #59 |
+| **Evidence integration** | PR #63 (merged at `de9d2977be07f101d555c0121672ee2f6b042ff1`) |
+| **Evidence baseline** | `d0c9a2091d80ba0d3a009511ae8ed9c8bb125a40` |
+| **Validator wording cleanup** | PR #64 (merged at `ef0e8d8d8d00e0e9383a71b47907786369bb9cdb`) |
+| **CI enforcement** | PR #68 (merged at `91581c54c88239f4b4e5f87020219c3e64eeed07`) |
+
+Housekeeping follow-ups:
+- PR #64 — validator wording only
+- PR #68 — CI enforcement for the evidence validator
+
+The classification is reconstructible from `fixtures/display/classification.json`
+and the evidence fixtures. GitHub is the source of truth for the historical
+proceedings.
+
+---
+
 ## References
 
 - [Get User Info](https://developers.tiktok.com/doc/tiktok-api-v2-get-user-info/)
