@@ -243,7 +243,7 @@ if problems:
 print("  ok  no synthetic members inside any provider response object")
 PY
 
-echo "9/11 OAuth audit fixture substantiates A2-A5 without secrets..."
+echo "9/11 OAuth audit fixture records durable lifecycle evidence without secrets..."
 python3 - "$FIXTURES/oauth-audit.sanitized.json" <<'PY'
 import json, re, sys
 t = open(sys.argv[1]).read()
@@ -255,12 +255,13 @@ for pat, label in [(r"https?://", "URL"), (r"\b[a-f0-9]{32,}\b", "long hex"),
 actions = [e["action"] for e in a["authorizationLifecycle"]]
 assert "authorization_callback" in actions, "no callback event recorded"
 cb = next(e for e in a["authorizationLifecycle"] if e["action"] == "authorization_callback")
-assert cb["outcome"] == "success", f"callback outcome is {cb['outcome']}, cannot substantiate A3/A5"
+assert cb["outcome"] == "success", f"callback outcome is {cb['outcome']}; no durable lifecycle evidence of a completed callback"
 conn = a["connectionOutcome"]
 assert conn["status"] == "active", "connection not active"
 assert set(conn["scopes"]) == {"user.info.basic","user.info.stats","video.list"}, "scope set mismatch"
 assert a.get("_limitation"), "oauth-audit must state its own limitation"
-print("  ok  callback success + active connection + scopes; no secrets; limitation stated")
+print("  ok  durable lifecycle evidence present (callback success, active connection, scopes); "
+      "no secrets; fixture states its own limitation")
 PY
 
 echo "10/11 Type semantics: representation type and observed provider type are distinct..."
