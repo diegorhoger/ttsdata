@@ -15,6 +15,7 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { resolve } from 'node:path';
+import { existsSync } from 'node:fs';
 import * as schema from './schema';
 
 const connectionString = process.env.DATABASE_URL;
@@ -23,10 +24,24 @@ if (!connectionString) {
   throw new Error('DATABASE_URL is required to run migrations');
 }
 
-// Compiled location is packages/db/dist/src/migrate.js, so the migrations
-// folder sits two levels up at packages/db/drizzle. `__dirname` is the CommonJS
-// equivalent and needs no ESM interop.
-const migrationsFolder = process.env.MIGRATIONS_FOLDER?.trim() || resolve(__dirname, '../../drizzle');
+// The migrator runs from two different locations:
+//   tsx (dev):      packages/db/src/migrate.ts   -> package root is '..'
+//   node (prod):    packages/db/dist/src/migrate.js -> package root is '../..'
+// Resolve the package root by walking up to the directory containing
+// package.json, so both invocation paths find packages/db/drizzle.
+function findPackageRoot(start: string): string {
+  let dir = start;
+  for (let depth = 0; depth < 6; depth += 1) {
+    if (existsSync(resolve(dir, 'package.json'))) return dir;
+    const parent = resolve(dir, '..');
+    if (parent === dir) break;
+    dir = parent;
+  }
+  throw new Error(`Could not locate the package root above ${start}`);
+}
+
+const migrationsFolder = process.env.MIGRATIONS_FOLDER?.trim()
+  || resolve(findPackageRoot(__dirname), 'drizzle');
 
 const pool = new Pool({ connectionString });
 const database = drizzle(pool, { schema });

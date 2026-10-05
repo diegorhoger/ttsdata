@@ -167,12 +167,22 @@ export async function registerProductRoutes(app: FastifyInstance) {
   app.get('/:id', async (request, reply) => {
     const { id } = request.params as { id: string };
 
-    const product = (await db.query.products.findFirst({
-      where: eq(products.id, id),
-      with: {
-        shop: true,  
-      },
-    })) as any;
+    // Explicit join: no Drizzle `relations()` metadata exists in this schema,
+    // so `db.query.*` with `with:` throws inside normalizeRelation.
+    const productRows = await db
+      .select({
+        product: products,
+        shop: shops,
+      })
+      .from(products)
+      .leftJoin(shops, eq(shops.id, products.shopId))
+      .where(eq(products.id, id))
+      .limit(1);
+
+    const productRow = productRows[0];
+    const product = productRow
+      ? { ...productRow.product, shop: productRow.shop }
+      : null;
 
     if (!product) {
       return reply.status(404).send({ error: 'NOT_FOUND', message: 'Product not found' });
@@ -194,11 +204,20 @@ export async function registerProductRoutes(app: FastifyInstance) {
     });
 
     // Linked creators
-    const linkedCreators = (await db.query.productCreatorLinks.findMany({
-      where: eq(productCreatorLinks.productId, id),
-      with: { creator: true },
-      limit: 20,
-    })) as any[];
+    const creatorRows = await db
+      .select({
+        link: productCreatorLinks,
+        creator: creators,
+      })
+      .from(productCreatorLinks)
+      .leftJoin(creators, eq(creators.id, productCreatorLinks.creatorId))
+      .where(eq(productCreatorLinks.productId, id))
+      .limit(20);
+
+    const linkedCreators = creatorRows.map((row) => ({
+      ...row.link,
+      creator: row.creator,
+    }));
 
     // Linked videos
     const linkedVideos = (await db.query.videos.findMany({

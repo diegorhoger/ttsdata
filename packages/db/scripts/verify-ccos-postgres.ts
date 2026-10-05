@@ -182,6 +182,7 @@ async function runConstraintTests(): Promise<void> {
       'packages/db/tests/ai/integration.test.ts',
       'packages/db/tests/display/integration.test.ts',
       'packages/db/tests/deployment/integration.test.ts',
+      'packages/db/tests/auth/integration.test.ts',
     ], {
       cwd: resolve(packageRoot, '../..'),
       env: { ...process.env, TEST_DATABASE_URL },
