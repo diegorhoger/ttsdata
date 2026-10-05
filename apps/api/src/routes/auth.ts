@@ -148,22 +148,34 @@ export async function registerAuthRoutes(app: FastifyInstance) {
       throw new AppError('Not authenticated', 401, 'UNAUTHORIZED');
     }
 
-    const session = (await db.query.sessions.findFirst({
-      where: eq(sessions.token, token),
-      with: { user: true },
-    })) as any;
+    // Explicit join: this schema defines no Drizzle `relations()` metadata, so
+    // `db.query.*` with `with:` throws inside normalizeRelation.
+    const rows = await db
+      .select({
+        expiresAt: sessions.expiresAt,
+        id: users.id,
+        email: users.email,
+        displayName: users.displayName,
+        role: users.role,
+        workspaceId: users.workspaceId,
+      })
+      .from(sessions)
+      .innerJoin(users, eq(users.id, sessions.userId))
+      .where(eq(sessions.token, token))
+      .limit(1);
 
+    const session = rows[0];
     if (!session || session.expiresAt < new Date()) {
       throw new AppError('Session expired', 401, 'SESSION_EXPIRED');
     }
 
     return reply.send({
       user: {
-        id: session.user.id,
-        email: session.user.email,
-        displayName: session.user.displayName,
-        role: session.user.role,
-        workspaceId: session.user.workspaceId,
+        id: session.id,
+        email: session.email,
+        displayName: session.displayName,
+        role: session.role,
+        workspaceId: session.workspaceId,
       },
     });
   });
