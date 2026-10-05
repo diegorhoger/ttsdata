@@ -32,7 +32,7 @@ pass() { echo "  ok  $*"; }
 derived() { echo "  [derived]  $*"; }
 contract() { echo "  [contract] $*"; }
 
-echo "1/10 Fixtures parse and exist..."
+echo "1/11 Fixtures parse and exist..."
 python3 - "$FIXTURES" <<'PY'
 import json, os, sys
 d = sys.argv[1]
@@ -44,7 +44,7 @@ for f in files:
     print(f"  ok  parsed {f}")
 PY
 
-echo "2/10 Pagination DERIVED from committed fingerprints (not from metadata)..."
+echo "2/11 Pagination DERIVED from committed fingerprints (not from metadata)..."
 python3 - "$FIXTURES/video-list.sanitized.json" <<'PY'
 import json, sys
 v = json.load(open(sys.argv[1]))
@@ -74,7 +74,7 @@ for pg in (p1, p2):
 print("  [derived]  page2 used page1's cursor; has_more true on both")
 PY
 
-echo "3/10 max_count boundary (CONTRACT assertion, not a derived observation)..."
+echo "3/11 max_count boundary (CONTRACT assertion, not a derived observation)..."
 python3 - "$FIXTURES/max-count-boundary.sanitized.json" <<'PY'
 import json, sys
 m = json.load(open(sys.argv[1]))
@@ -86,7 +86,7 @@ assert set(e.keys()) == {"code", "message", "log_id"}, f"envelope shape {set(e.k
 print("  [contract] observed 400 invalid_params with {code,message,log_id}")
 PY
 
-echo "4/10 Redaction: no synthetic zeros, no leaked identifiers/URLs..."
+echo "4/11 Redaction: no synthetic zeros, no leaked identifiers/URLs..."
 python3 - "$FIXTURES" <<'PY'
 import json, os, re, sys
 d = sys.argv[1]
@@ -106,7 +106,7 @@ if problems:
 print("  ok  no raw URLs, tokens, hex identifiers, or credential field names")
 PY
 
-echo "5/10 Absent fields genuinely absent; no 0/null/empty substituted..."
+echo "5/11 Absent fields genuinely absent; no 0/null/empty substituted..."
 python3 - "$FIXTURES/user-info.sanitized.json" "$FIXTURES/video-list.sanitized.json" <<'PY'
 import json, sys
 ui = json.load(open(sys.argv[1]))
@@ -124,7 +124,7 @@ for k, v in sample.items():
 print("  ok  absent fields absent; no 0/null/empty; redaction strings used")
 PY
 
-echo "6/10 PROBE_VERIFIED count DERIVED from the classification source..."
+echo "6/11 PROBE_VERIFIED count DERIVED from the classification source..."
 python3 - "$FIXTURES/classification.json" "$DOC" <<'PY'
 import json, re, sys
 m = json.load(open(sys.argv[1]))
@@ -142,7 +142,73 @@ assert matrix_rows == derived, f"matrix has {matrix_rows} PROBE_VERIFIED rows, s
 print(f"  [derived]  document count and matrix rows both = {derived}")
 PY
 
-echo "7/10 Synthetic-field audit: provider response objects contain only observed members..."
+echo "7/11 PROBE_VERIFIED rows must be fixture-backed (no unsupported promotions)..."
+python3 - "$FIXTURES" "$FIXTURES/classification.json" <<'PY'
+import json, os, sys
+d, src_path = sys.argv[1], sys.argv[2]
+m = json.load(open(src_path))
+
+# Fixture-specific structural validators. Adding a PROBE_VERIFIED row whose
+# fixture lacks one of these is a failure, not a silent pass.
+def v_user_info(o):
+    assert set(o["data"].keys()) == {"user"}, "user-info data shape"
+    assert len(o["data"]["user"]) >= 7, "user-info field set too small"
+    assert "_observedTypes" in o, "user-info missing type metadata"
+
+def v_video_list(o):
+    for pg in ("page1", "page2"):
+        assert "evidence" in o[pg], f"{pg} missing evidence block"
+        assert len(o[pg]["evidence"]["itemFingerprints"]) > 0, f"{pg} no fingerprints"
+    f1 = o["page1"]["evidence"]["itemFingerprints"]
+    f2 = o["page2"]["evidence"]["itemFingerprints"]
+    assert len(set(f1) & set(f2)) == 0, "pages overlap"
+    assert o["page1"]["evidence"]["cursorFingerprint"] != o["page2"]["evidence"]["cursorFingerprint"], "cursor unchanged"
+
+def v_max_count(o):
+    assert o["response"]["status"] == 400, "boundary not 400"
+    assert set(o["response"]["error"].keys()) == {"code", "message", "log_id"}, "envelope shape"
+
+def v_oauth_audit(o):
+    acts = [e["action"] for e in o["authorizationLifecycle"]]
+    assert "authorization_callback" in acts, "no callback event"
+    assert o["connectionOutcome"]["status"] == "active", "connection not active"
+
+VALIDATORS = {
+    "user-info.sanitized.json": v_user_info,
+    "video-list.sanitized.json": v_video_list,
+    "max-count-boundary.sanitized.json": v_max_count,
+    "oauth-audit.sanitized.json": v_oauth_audit,
+}
+
+problems = []
+for c in m["claims"]:
+    if c["current"] != "PROBE_VERIFIED":
+        continue
+    fx = c.get("fixture")
+    if not fx:
+        problems.append(f"{c['id']}: PROBE_VERIFIED with no fixture")
+        continue
+    path = os.path.join(d, fx)
+    if not os.path.exists(path):
+        problems.append(f"{c['id']}: fixture missing: {fx}")
+        continue
+    fn = VALIDATORS.get(fx)
+    if fn is None:
+        problems.append(f"{c['id']}: fixture {fx} has no structural validator")
+        continue
+    try:
+        fn(json.load(open(path)))
+    except AssertionError as e:
+        problems.append(f"{c['id']}: fixture {fx} failed validation: {e}")
+
+if problems:
+    print("\n".join(problems), file=sys.stderr); sys.exit(1)
+n = len([c for c in m["claims"] if c["current"] == "PROBE_VERIFIED"])
+print(f"  ok  all {n} PROBE_VERIFIED rows are fixture-backed and pass fixture-specific validation")
+print("  note: this enforces durable committed support, NOT cryptographic provider provenance")
+PY
+
+echo "8/11 Synthetic-field audit: provider response objects contain only observed members..."
 python3 - "$FIXTURES" <<'PY'
 import json, os, sys
 d = sys.argv[1]
@@ -177,7 +243,7 @@ if problems:
 print("  ok  no synthetic members inside any provider response object")
 PY
 
-echo "8/10 OAuth audit fixture substantiates A2-A5 without secrets..."
+echo "9/11 OAuth audit fixture substantiates A2-A5 without secrets..."
 python3 - "$FIXTURES/oauth-audit.sanitized.json" <<'PY'
 import json, re, sys
 t = open(sys.argv[1]).read()
@@ -197,7 +263,7 @@ assert a.get("_limitation"), "oauth-audit must state its own limitation"
 print("  ok  callback success + active connection + scopes; no secrets; limitation stated")
 PY
 
-echo "9/10 Type semantics: representation type and observed provider type are distinct..."
+echo "10/11 Type semantics: representation type and observed provider type are distinct..."
 python3 - "$FIXTURES/user-info.sanitized.json" <<'PY'
 import json, sys
 ui = json.load(open(sys.argv[1]))
@@ -209,7 +275,7 @@ assert ui["_observedTypes"]["follower_count"] == "number"
 print("  ok  representation is a redaction string; provider type recorded as metadata")
 PY
 
-echo "10/10 Negative control: mutating pagination evidence must FAIL the gate..."
+echo "11/11 Negative control: mutating pagination evidence must FAIL the gate..."
 python3 - "$FIXTURES/video-list.sanitized.json" <<'PY'
 import json, sys, copy
 v = json.load(open(sys.argv[1]))

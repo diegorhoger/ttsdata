@@ -22,9 +22,9 @@
       "id": "A3",
       "claim": "authorization-code exchange succeeded",
       "previous": "DOC_VERIFIED",
-      "current": "PROBE_VERIFIED",
+      "current": "CODE_VERIFIED",
       "fixture": "oauth-audit.sanitized.json",
-      "limitation": null
+      "limitation": "exchange inferred from local durable state (callback success + active connection); the provider's exchange response is not retained, so this is not an independent provider observation"
     },
     {
       "id": "A4",
@@ -38,9 +38,9 @@
       "id": "A5",
       "claim": "complete key+secret pair",
       "previous": "NOT_OBSERVED",
-      "current": "PROBE_VERIFIED",
+      "current": "CODE_VERIFIED",
       "fixture": "oauth-audit.sanitized.json",
-      "limitation": null
+      "limitation": "provider acceptance of the client credential is inferred from the same local durable state; no retained provider receipt"
     },
     {
       "id": "B1",
@@ -130,5 +130,6 @@
       "fixture": "max-count-boundary.sanitized.json",
       "limitation": null
     }
-  ]
+  ],
+  "_taxonomyNote": "A3 and A5 are CODE_VERIFIED, not PROBE_VERIFIED: the provider's exchange response is not retained. Callback success plus an active persisted connection are durable LOCAL execution evidence from which a completed exchange is inferred through the committed code path. That is stronger than documentation but weaker than a retained provider observation, so it is not PROBE_VERIFIED."
 }
