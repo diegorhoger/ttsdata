@@ -79,31 +79,43 @@ about what TikTok returns.
 
 ### LIVE PROBE RESULTS (2026-10-05)
 
-A controlled authenticated TikTok Display observation was performed. Row-level matrix:
+A controlled authenticated TikTok Display observation was performed. The matrix and the
+count below are **generated from `fixtures/display/classification.json`**, which is the
+authoritative structured classification source. The validator derives the count from that
+file, so the document cannot drift from the rows.
 
-| # | Claim | Previous | Candidate | Supporting fixture | Limitation |
+| # | Claim | Previous | Current | Supporting fixture | Limitation |
 |---|---|---|---|---|---|
 | A1 | OAuth lifecycle orchestration (our code) | CODE_VERIFIED | CODE_VERIFIED | — | unchanged |
-| A2 | live start -> provider -> callback | DOC_VERIFIED | **PROBE_VERIFIED** | — (audit record) | — |
-| A3 | authorization-code exchange succeeded | DOC_VERIFIED | **PROBE_VERIFIED** | — (audit `authorization_callback: success`) | — |
-| A4 | granted scope set | SCOPE_AVAILABLE | **PROBE_VERIFIED** | — | all three granted |
-| A5 | complete key+secret pair | NOT_OBSERVED | **PROBE_VERIFIED** | — | provider accepted the exchange |
-| B1 | `GET /v2/user/info/` 200 + envelope | DOC_VERIFIED | **PROBE_VERIFIED** | user-info.sanitized.json | — |
-| B2 | profile field set (7 fields) | DOC_VERIFIED | **PROBE_VERIFIED** | user-info.sanitized.json | — |
-| B3 | `user.info.profile` fields | DOC_VERIFIED | **NOT_GRANTED** | — | scope not granted |
-| C1 | `POST /v2/video/list/` request shape | DOC_VERIFIED | **PROBE_VERIFIED** | video-list.sanitized.json | — |
-| C2 | video-list envelope | DOC_VERIFIED | **PROBE_VERIFIED** | video-list.sanitized.json | — |
-| C3 | cursor advancement across >=2 pages | NOT_OBSERVED | **PROBE_VERIFIED** | video-list.sanitized.json (`paginationObservation`) | — |
-| C4 | `has_more` behaviour | DOC_VERIFIED | **PROBE_VERIFIED** | video-list.sanitized.json | true on both pages |
-| C5 | `max_count` documented maximum | DOC_VERIFIED | **PROBE_VERIFIED** | max-count-boundary.sanitized.json | 50 -> 400 |
-| D1 | video field set (13 fields) | DOC_VERIFIED | **PROBE_VERIFIED** | video-list.sanitized.json | — |
+| A2 | live start -> provider -> callback | DOC_VERIFIED | **PROBE_VERIFIED** | `oauth-audit.sanitized.json` | — |
+| A3 | authorization-code exchange succeeded | DOC_VERIFIED | **PROBE_VERIFIED** | `oauth-audit.sanitized.json` | — |
+| A4 | granted scope set | SCOPE_AVAILABLE | **PROBE_VERIFIED** | `oauth-audit.sanitized.json` | all three granted |
+| A5 | complete key+secret pair | NOT_OBSERVED | **PROBE_VERIFIED** | `oauth-audit.sanitized.json` | — |
+| B1 | GET /v2/user/info/ 200 + envelope | DOC_VERIFIED | **PROBE_VERIFIED** | `user-info.sanitized.json` | — |
+| B2 | profile field set (7 fields) | DOC_VERIFIED | **PROBE_VERIFIED** | `user-info.sanitized.json` | — |
+| B3 | user.info.profile fields | DOC_VERIFIED | NOT_GRANTED | — | scope not granted |
+| C1 | POST /v2/video/list/ request shape | DOC_VERIFIED | **PROBE_VERIFIED** | `video-list.sanitized.json` | — |
+| C2 | video-list envelope | DOC_VERIFIED | **PROBE_VERIFIED** | `video-list.sanitized.json` | — |
+| C3 | cursor advancement across >=2 pages | NOT_OBSERVED | **PROBE_VERIFIED** | `video-list.sanitized.json` | — |
+| C4 | has_more behaviour | DOC_VERIFIED | **PROBE_VERIFIED** | `video-list.sanitized.json` | true on both pages |
+| C5 | max_count documented maximum | DOC_VERIFIED | **PROBE_VERIFIED** | `max-count-boundary.sanitized.json` | 50 -> 400 |
+| D1 | video field set (13 fields) | DOC_VERIFIED | **PROBE_VERIFIED** | `video-list.sanitized.json` | — |
 | E1 | cover-image URL lifetime | DOC_VERIFIED | DOC_VERIFIED | — | not re-confirmed (L2) |
-| F1 | provider error-envelope shape | DOC_VERIFIED | **PROBE_VERIFIED** | max-count-boundary.sanitized.json | — |
+| F1 | provider error-envelope shape | DOC_VERIFIED | **PROBE_VERIFIED** | `max-count-boundary.sanitized.json` | — |
 
-**PROBE_VERIFIED count = 14**, reconciled arithmetically:
-A2, A3, A4, A5 (4) + B1, B2 (2) + C1, C2, C3, C4, C5 (5) + D1 (1) + F1 (1) = **14**.
+**PROBE_VERIFIED count = 13**, reconciled arithmetically: 4 + 2 + 5 + 1 + 1 = **13**.
 A1 remains CODE_VERIFIED. B3 is NOT_GRANTED. E1 remains DOC_VERIFIED.
-No row was promoted without a live observation.
+No row was promoted without durable supporting evidence in this package.
+
+### Durable support for the OAuth rows (A2-A5)
+
+`fixtures/display/oauth-audit.sanitized.json` substantiates A2-A5 from the
+`display_audit` table and the persisted connection row produced by the live run.
+
+**Honest limitation:** the exchange's own provider response is not committed. A3/A5 are
+substantiated by the callback reaching `outcome: success`, which in the committed code
+path is unreachable without a completed authorization-code exchange. That is durable
+local evidence, not an independent provider receipt, and the fixture says so.
 
 ### Pagination evidence
 

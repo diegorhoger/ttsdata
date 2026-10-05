@@ -32,7 +32,7 @@ pass() { echo "  ok  $*"; }
 derived() { echo "  [derived]  $*"; }
 contract() { echo "  [contract] $*"; }
 
-echo "1/7 Fixtures parse and exist..."
+echo "1/10 Fixtures parse and exist..."
 python3 - "$FIXTURES" <<'PY'
 import json, os, sys
 d = sys.argv[1]
@@ -44,18 +44,18 @@ for f in files:
     print(f"  ok  parsed {f}")
 PY
 
-echo "2/7 Pagination DERIVED from committed fingerprints (not from metadata)..."
+echo "2/10 Pagination DERIVED from committed fingerprints (not from metadata)..."
 python3 - "$FIXTURES/video-list.sanitized.json" <<'PY'
 import json, sys
 v = json.load(open(sys.argv[1]))
 p1, p2 = v["page1"], v["page2"]
-f1 = p1["response"]["data"]["itemFingerprints"]
-f2 = p2["response"]["data"]["itemFingerprints"]
+f1 = p1["evidence"]["itemFingerprints"]
+f2 = p2["evidence"]["itemFingerprints"]
 
 derived_p1 = len(f1)
 derived_p2 = len(f2)
 derived_overlap = len(set(f1) & set(f2))
-derived_cursor_differs = p1["response"]["data"]["cursorFingerprint"] != p2["response"]["data"]["cursorFingerprint"]
+derived_cursor_differs = p1["evidence"]["cursorFingerprint"] != p2["evidence"]["cursorFingerprint"]
 
 print(f"  [derived]  page1 item count from fingerprints = {derived_p1}")
 print(f"  [derived]  page2 item count from fingerprints = {derived_p2}")
@@ -66,7 +66,7 @@ assert derived_p1 > 0, "page1 fingerprints empty — cannot substantiate the cla
 assert derived_p2 > 0, "page2 fingerprints empty — cannot substantiate the claim"
 assert derived_overlap == 0, f"pages share {derived_overlap} items — cursor did not advance"
 assert derived_cursor_differs, "cursor fingerprints identical — no advancement evidence"
-assert p2["request"]["cursorFingerprint"] == p1["response"]["data"]["cursorFingerprint"], \
+assert p2["request"]["cursorFingerprint"] == p1["evidence"]["cursorFingerprint"], \
     "page2 was not requested with page1's cursor"
 for pg in (p1, p2):
     assert pg["response"]["data"]["has_more"] is True, "has_more not true"
@@ -74,7 +74,7 @@ for pg in (p1, p2):
 print("  [derived]  page2 used page1's cursor; has_more true on both")
 PY
 
-echo "3/7 max_count boundary (CONTRACT assertion, not a derived observation)..."
+echo "3/10 max_count boundary (CONTRACT assertion, not a derived observation)..."
 python3 - "$FIXTURES/max-count-boundary.sanitized.json" <<'PY'
 import json, sys
 m = json.load(open(sys.argv[1]))
@@ -86,7 +86,7 @@ assert set(e.keys()) == {"code", "message", "log_id"}, f"envelope shape {set(e.k
 print("  [contract] observed 400 invalid_params with {code,message,log_id}")
 PY
 
-echo "4/7 Redaction: no synthetic zeros, no leaked identifiers/URLs..."
+echo "4/10 Redaction: no synthetic zeros, no leaked identifiers/URLs..."
 python3 - "$FIXTURES" <<'PY'
 import json, os, re, sys
 d = sys.argv[1]
@@ -106,7 +106,7 @@ if problems:
 print("  ok  no raw URLs, tokens, hex identifiers, or credential field names")
 PY
 
-echo "5/7 Absent fields genuinely absent; no 0/null/empty substituted..."
+echo "5/10 Absent fields genuinely absent; no 0/null/empty substituted..."
 python3 - "$FIXTURES/user-info.sanitized.json" "$FIXTURES/video-list.sanitized.json" <<'PY'
 import json, sys
 ui = json.load(open(sys.argv[1]))
@@ -124,7 +124,80 @@ for k, v in sample.items():
 print("  ok  absent fields absent; no 0/null/empty; redaction strings used")
 PY
 
-echo "6/7 Type semantics: representation type and observed provider type are distinct..."
+echo "6/10 PROBE_VERIFIED count DERIVED from the classification source..."
+python3 - "$FIXTURES/classification.json" "$DOC" <<'PY'
+import json, re, sys
+m = json.load(open(sys.argv[1]))
+doc = open(sys.argv[2]).read()
+pv = [c["id"] for c in m["claims"] if c["current"] == "PROBE_VERIFIED"]
+derived = len(pv)
+print(f"  [derived]  PROBE_VERIFIED rows in classification.json = {derived}  {pv}")
+
+# The document must state the SAME number, and its matrix must have the same row count.
+stated = re.findall(r"PROBE_VERIFIED count = \**(\d+)\**", doc)
+assert stated, "document does not state a PROBE_VERIFIED count"
+assert int(stated[0]) == derived, f"document says {stated[0]}, classification.json derives {derived}"
+matrix_rows = len(re.findall(r"\*\*PROBE_VERIFIED\*\*", doc))
+assert matrix_rows == derived, f"matrix has {matrix_rows} PROBE_VERIFIED rows, source has {derived}"
+print(f"  [derived]  document count and matrix rows both = {derived}")
+PY
+
+echo "7/10 Synthetic-field audit: provider response objects contain only observed members..."
+python3 - "$FIXTURES" <<'PY'
+import json, os, sys
+d = sys.argv[1]
+problems = []
+
+vl = json.load(open(os.path.join(d, "video-list.sanitized.json")))
+# TikTok's video/list response data contains exactly: videos, cursor, has_more.
+ALLOWED = {"videos", "cursor", "has_more"}
+for pg in ("page1", "page2"):
+    actual = set(vl[pg]["response"]["data"].keys())
+    extra = actual - ALLOWED
+    if extra:
+        problems.append(f"video-list {pg} response.data has non-provider members: {sorted(extra)}")
+    # derived evidence must live in the sibling block, not the response
+    assert "evidence" in vl[pg], f"{pg} missing evidence block for derived fields"
+
+ui = json.load(open(os.path.join(d, "user-info.sanitized.json")))
+if set(ui["data"].keys()) != {"user"}:
+    problems.append(f"user-info data has unexpected members: {sorted(ui['data'].keys())}")
+ALLOWED_USER = {"open_id","display_name","avatar_url","follower_count",
+                "following_count","likes_count","video_count"}
+extra_u = set(ui["data"]["user"].keys()) - ALLOWED_USER
+if extra_u:
+    problems.append(f"user-info user has non-provider members: {sorted(extra_u)}")
+
+mc = json.load(open(os.path.join(d, "max-count-boundary.sanitized.json")))
+if set(mc["response"].keys()) - {"status","error"}:
+    problems.append(f"max-count response has unexpected members: {sorted(mc['response'].keys())}")
+
+if problems:
+    print("\n".join(problems), file=sys.stderr); sys.exit(1)
+print("  ok  no synthetic members inside any provider response object")
+PY
+
+echo "8/10 OAuth audit fixture substantiates A2-A5 without secrets..."
+python3 - "$FIXTURES/oauth-audit.sanitized.json" <<'PY'
+import json, re, sys
+t = open(sys.argv[1]).read()
+a = json.loads(t)
+# Must not carry credential material or provider identity.
+for pat, label in [(r"https?://", "URL"), (r"\b[a-f0-9]{32,}\b", "long hex"),
+                   (r"Bearer\s", "bearer"), (r"client_(?:secret|key)\s*[:=]\s*[\"']?[A-Za-z0-9_-]{6,}", "credential value")]:
+    assert not re.search(pat, t), f"oauth-audit contains {label}"
+actions = [e["action"] for e in a["authorizationLifecycle"]]
+assert "authorization_callback" in actions, "no callback event recorded"
+cb = next(e for e in a["authorizationLifecycle"] if e["action"] == "authorization_callback")
+assert cb["outcome"] == "success", f"callback outcome is {cb['outcome']}, cannot substantiate A3/A5"
+conn = a["connectionOutcome"]
+assert conn["status"] == "active", "connection not active"
+assert set(conn["scopes"]) == {"user.info.basic","user.info.stats","video.list"}, "scope set mismatch"
+assert a.get("_limitation"), "oauth-audit must state its own limitation"
+print("  ok  callback success + active connection + scopes; no secrets; limitation stated")
+PY
+
+echo "9/10 Type semantics: representation type and observed provider type are distinct..."
 python3 - "$FIXTURES/user-info.sanitized.json" <<'PY'
 import json, sys
 ui = json.load(open(sys.argv[1]))
@@ -136,35 +209,35 @@ assert ui["_observedTypes"]["follower_count"] == "number"
 print("  ok  representation is a redaction string; provider type recorded as metadata")
 PY
 
-echo "7/7 Negative control: mutating pagination evidence must FAIL the gate..."
+echo "10/10 Negative control: mutating pagination evidence must FAIL the gate..."
 python3 - "$FIXTURES/video-list.sanitized.json" <<'PY'
 import json, sys, copy
 v = json.load(open(sys.argv[1]))
 
 def gate(fixture):
     p1, p2 = fixture["page1"], fixture["page2"]
-    f1 = p1["response"]["data"]["itemFingerprints"]
-    f2 = p2["response"]["data"]["itemFingerprints"]
+    f1 = p1["evidence"]["itemFingerprints"]
+    f2 = p2["evidence"]["itemFingerprints"]
     if not f1 or not f2: return False
     if set(f1) & set(f2): return False
-    if p1["response"]["data"]["cursorFingerprint"] == p2["response"]["data"]["cursorFingerprint"]:
+    if p1["evidence"]["cursorFingerprint"] == p2["evidence"]["cursorFingerprint"]:
         return False
-    if p2["request"]["cursorFingerprint"] != p1["response"]["data"]["cursorFingerprint"]:
+    if p2["request"]["cursorFingerprint"] != p1["evidence"]["cursorFingerprint"]:
         return False
     return True
 
 assert gate(v) is True, "unmutated fixture should pass"
 
 m1 = copy.deepcopy(v)
-m1["page2"]["response"]["data"]["itemFingerprints"] = list(v["page1"]["response"]["data"]["itemFingerprints"])
+m1["page2"]["evidence"]["itemFingerprints"] = list(v["page1"]["evidence"]["itemFingerprints"])
 assert gate(m1) is False, "overlap mutation NOT detected"
 
 m2 = copy.deepcopy(v)
-m2["page2"]["response"]["data"]["cursorFingerprint"] = v["page1"]["response"]["data"]["cursorFingerprint"]
+m2["page2"]["evidence"]["cursorFingerprint"] = v["page1"]["evidence"]["cursorFingerprint"]
 assert gate(m2) is False, "identical-cursor mutation NOT detected"
 
 m3 = copy.deepcopy(v)
-m3["page2"]["response"]["data"]["itemFingerprints"] = []
+m3["page2"]["evidence"]["itemFingerprints"] = []
 assert gate(m3) is False, "empty-page mutation NOT detected"
 
 print("  ok  3 mutations detected (overlap, identical cursor, empty page)")

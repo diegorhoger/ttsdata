@@ -1,5 +1,5 @@
 {
-  "_note": "Sanitized from live authenticated POST /v2/video/list/ responses (both pages).",
+  "_note": "Sanitized from live authenticated POST /v2/video/list/ responses. `response.data` contains ONLY members TikTok actually returned: videos, cursor, has_more. Derived evidence (fingerprints, observed cursor type, counts) is in the sibling `evidence` block and must never be mistaken for provider response data.",
   "page1": {
     "request": {
       "max_count": 20
@@ -24,39 +24,41 @@
             "view_count": "<NUMBER>"
           }
         ],
-        "videoCount": 20,
-        "cursor": "<NUMBER>",
-        "cursorKind": "number",
-        "has_more": true,
-        "itemFingerprints": [
-          "sha256:df443131a280f115347fd9fe",
-          "sha256:d823103e9706a9f23b07ce15",
-          "sha256:1ce4a3e8d8125f336905b64d",
-          "sha256:47d81ba1466d6ad11c73333e",
-          "sha256:dfc07eb4f4b1cc6761051292",
-          "sha256:395df72351bbb0dbfcc1aeeb",
-          "sha256:24eaa621b18c676123dab12f",
-          "sha256:e042083de02f4d12601661c7",
-          "sha256:388c6b45a23bbe65dfff2799",
-          "sha256:8b9cccbdb77dc8b11d9b7147",
-          "sha256:5fb2cbac0c37b33a9a65f3a9",
-          "sha256:af9cc1a852a00cd529cfde1d",
-          "sha256:77a7037be3565403b8cd9cb6",
-          "sha256:785f42c938d9f4d35a8bb5e6",
-          "sha256:4f254456f7dd5867a44782bb",
-          "sha256:c283e0aa84fb1324a2f9391b",
-          "sha256:c629dfce8a2824d6aa72c0f8",
-          "sha256:5574532486d693a8be0b6971",
-          "sha256:d6a37e7c53fdcb98ee2fb716",
-          "sha256:f79b8afad8e0e1590dce79a2"
-        ],
-        "cursorFingerprint": "sha256:d791f3009c7e2fe6bb9a03f8"
+        "cursor": "<REDACTED>",
+        "has_more": true
       },
       "error": {
         "code": "ok",
         "message": "",
         "log_id": "<REDACTED>"
       }
+    },
+    "evidence": {
+      "itemFingerprints": [
+        "sha256:df443131a280f115347fd9fe",
+        "sha256:d823103e9706a9f23b07ce15",
+        "sha256:1ce4a3e8d8125f336905b64d",
+        "sha256:47d81ba1466d6ad11c73333e",
+        "sha256:dfc07eb4f4b1cc6761051292",
+        "sha256:395df72351bbb0dbfcc1aeeb",
+        "sha256:24eaa621b18c676123dab12f",
+        "sha256:e042083de02f4d12601661c7",
+        "sha256:388c6b45a23bbe65dfff2799",
+        "sha256:8b9cccbdb77dc8b11d9b7147",
+        "sha256:5fb2cbac0c37b33a9a65f3a9",
+        "sha256:af9cc1a852a00cd529cfde1d",
+        "sha256:77a7037be3565403b8cd9cb6",
+        "sha256:785f42c938d9f4d35a8bb5e6",
+        "sha256:4f254456f7dd5867a44782bb",
+        "sha256:c283e0aa84fb1324a2f9391b",
+        "sha256:c629dfce8a2824d6aa72c0f8",
+        "sha256:5574532486d693a8be0b6971",
+        "sha256:d6a37e7c53fdcb98ee2fb716",
+        "sha256:f79b8afad8e0e1590dce79a2"
+      ],
+      "cursorFingerprint": "sha256:d791f3009c7e2fe6bb9a03f8",
+      "cursorKind": "number",
+      "videoCount": 20
     }
   },
   "page2": {
@@ -85,39 +87,41 @@
             "view_count": "<NUMBER>"
           }
         ],
-        "videoCount": 20,
-        "cursor": "<NUMBER>",
-        "cursorKind": "number",
-        "has_more": true,
-        "itemFingerprints": [
-          "sha256:8c0f84ac60a475c85b7eaf47",
-          "sha256:51b3e73cb8b040809c75f9a6",
-          "sha256:bac4fcb4c58e1de87f4b9072",
-          "sha256:c6d1c3f0fb7bbcb512ae98f6",
-          "sha256:1e4eb80130b573d35efc521a",
-          "sha256:688ddc733e9fdf1e64487c39",
-          "sha256:ab571fc491085d731ae81755",
-          "sha256:2e03811e6c6fe388001ab79a",
-          "sha256:3934efd1b267d0086fa513e9",
-          "sha256:b48806f2a3ed1947666c7232",
-          "sha256:9a94223622fe760917daf9bf",
-          "sha256:457dae85828d797820eac709",
-          "sha256:03c1f01f759d6efb7fff51c7",
-          "sha256:a3b6915a76780a031051fe42",
-          "sha256:df3fa1b9c1f8bfb8e3ba233b",
-          "sha256:f80e4427820d4a24b265745a",
-          "sha256:c884c6ae80e11b7fee8900ec",
-          "sha256:791b29ee814d8197ae5442d4",
-          "sha256:fb65e3fa9bd91f3d48689089",
-          "sha256:0f2e6006701523eaed3acce2"
-        ],
-        "cursorFingerprint": "sha256:ba24b42fd5630e3290452f0b"
+        "cursor": "<REDACTED>",
+        "has_more": true
       },
       "error": {
         "code": "ok",
         "message": "",
         "log_id": "<REDACTED>"
       }
+    },
+    "evidence": {
+      "itemFingerprints": [
+        "sha256:8c0f84ac60a475c85b7eaf47",
+        "sha256:51b3e73cb8b040809c75f9a6",
+        "sha256:bac4fcb4c58e1de87f4b9072",
+        "sha256:c6d1c3f0fb7bbcb512ae98f6",
+        "sha256:1e4eb80130b573d35efc521a",
+        "sha256:688ddc733e9fdf1e64487c39",
+        "sha256:ab571fc491085d731ae81755",
+        "sha256:2e03811e6c6fe388001ab79a",
+        "sha256:3934efd1b267d0086fa513e9",
+        "sha256:b48806f2a3ed1947666c7232",
+        "sha256:9a94223622fe760917daf9bf",
+        "sha256:457dae85828d797820eac709",
+        "sha256:03c1f01f759d6efb7fff51c7",
+        "sha256:a3b6915a76780a031051fe42",
+        "sha256:df3fa1b9c1f8bfb8e3ba233b",
+        "sha256:f80e4427820d4a24b265745a",
+        "sha256:c884c6ae80e11b7fee8900ec",
+        "sha256:791b29ee814d8197ae5442d4",
+        "sha256:fb65e3fa9bd91f3d48689089",
+        "sha256:0f2e6006701523eaed3acce2"
+      ],
+      "cursorFingerprint": "sha256:ba24b42fd5630e3290452f0b",
+      "cursorKind": "number",
+      "videoCount": 20
     }
   },
   "paginationObservation": {
