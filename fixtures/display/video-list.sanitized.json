@@ -1,0 +1,28 @@
+{
+  "data": {
+    "videos": [
+      {
+        "id": "<REDACTED>",
+        "title": "<REDACTED>",
+        "video_description": "<REDACTED>",
+        "create_time": 0,
+        "cover_image_url": "<REDACTED>",
+        "share_url": "<REDACTED>",
+        "duration": 0,
+        "height": 0,
+        "width": 0,
+        "like_count": 0,
+        "comment_count": 0,
+        "share_count": 0,
+        "view_count": 0
+      }
+    ],
+    "cursor": 0,
+    "has_more": true
+  },
+  "error": {
+    "code": "ok",
+    "message": "",
+    "log_id": "<REDACTED>"
+  }
+}

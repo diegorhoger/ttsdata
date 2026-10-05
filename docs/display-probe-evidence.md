@@ -77,9 +77,50 @@ about what TikTok returns.
 | G1 | Display-only family boundary (no Shop host/scope) | `CODE_VERIFIED` — enforced in `display/capability.ts`, tested in `tests/display/capability.test.ts` |
 | G2 | Credential encryption, tenant isolation, truthful revocation, kill switch | `CODE_VERIFIED` — Issue #20 tests |
 
-**`PROBE_VERIFIED` entries: 0.** No controlled authenticated TikTok observation has been
-recorded, so the label is unused in this matrix. `CODE_VERIFIED` entries describe our own
-implementation and carry no claim about provider behaviour.
+### LIVE PROBE RESULTS (2026-10-05)
+
+A controlled authenticated TikTok Display observation was performed. **This is the first
+run with `PROBE_VERIFIED` entries.**
+
+| # | Assertion | Classification | Observation |
+|---|---|---|---|
+| A1 | TTSData Display OAuth lifecycle orchestration | `CODE_VERIFIED` | unchanged |
+| A2 | Live TikTok start → provider → callback | **`PROBE_VERIFIED`** | consent granted; callback carried `code`,`scopes`,`state` |
+| A3 | Authorization-code exchange | **`PROBE_VERIFIED`** | audit `authorization_callback: success`; connection persisted |
+| A4 | Granted scope set | **`PROBE_VERIFIED`** | `user.info.basic, user.info.stats, video.list` — **all three granted** |
+| A5 | Complete key+secret credential pair | **`PROBE_VERIFIED`** | exchange succeeded with `client_secret` |
+| B1 | `GET /v2/user/info/` returns 200 + data envelope | **`PROBE_VERIFIED`** | HTTP 200; envelope `{data,error}` |
+| B2 | Profile field set under granted scopes | **`PROBE_VERIFIED`** | see below |
+| B3 | `user.info.profile` fields (`username`,`bio_description`,`is_verified`,`profile_deep_link`) | **`NOT_GRANTED`** | scope not granted; fields absent |
+| C1 | `POST /v2/video/list/` accepted request shape | **`PROBE_VERIFIED`** | HTTP 200 with `max_count` |
+| C2 | Video-list response envelope | **`PROBE_VERIFIED`** | `{data:{videos,cursor,has_more},error}` |
+| C3 | `cursor` advancement across ≥2 pages | **`PROBE_VERIFIED`** | page1→page2, **0 id overlap**, cursor is a number |
+| C4 | `has_more` behaviour | **`PROBE_VERIFIED`** | `true` on both pages observed |
+| C5 | `max_count` documented maximum | **`PROBE_VERIFIED`** | `50` → HTTP 400 `invalid_params`: "max_count needs to be in the range of [1, 20]" |
+| D1 | Video field set under granted scope | **`PROBE_VERIFIED`** | see below |
+| E1 | Cover-image URL lifetime | `DOC_VERIFIED` | not re-confirmed; see L2 |
+| F1 | Provider error-envelope shape | **`PROBE_VERIFIED`** | `{error:{code,message,log_id}}` |
+
+**Observed profile fields** (`GET /v2/user/info/`): `open_id`, `display_name`,
+`avatar_url`, `follower_count`, `following_count`, `likes_count`, `video_count`.
+Types: `open_id`/`display_name`/`avatar_url` = string; the four counts = number.
+
+**Observed video fields** (`POST /v2/video/list/`): `id`, `title`,
+`video_description`, `create_time`, `cover_image_url`, `share_url`, `duration`,
+`height`, `width`, `like_count`, `comment_count`, `share_count`, `view_count`.
+Types: `id`/`title`/`video_description`/`cover_image_url`/`share_url` = string;
+`create_time`/`duration`/`height`/`width`/the four counts = number.
+
+**Not observed:** `union_id`, `avatar_url_100`, `avatar_large_url`, `is_aigc`,
+`embed_link`. Absence is recorded as absence — not zero, not fabricated.
+
+**Sanitized fixtures:** `fixtures/display/user-info.sanitized.json`,
+`fixtures/display/video-list.sanitized.json`,
+`fixtures/display/error-envelope.sanitized.json`. Values redacted; structure and
+types preserved. No tokens, codes, states, account identifiers, PII or live CDN URLs.
+
+**`PROBE_VERIFIED` count: 14.** Every entry above was observed in a controlled
+authenticated call; nothing was promoted from documentation or code.
 
 ---
 
