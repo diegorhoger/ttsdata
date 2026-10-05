@@ -13,7 +13,8 @@ on:
     paths:
       - 'apps/api/**'
       - 'packages/**'
-      - 'scripts/verify-api-container.sh'
+      - 'scripts/**'
+      - 'fixtures/**'
       - 'pnpm-lock.yaml'
       - 'railway.json'
       - '.github/workflows/api-container.yml'
