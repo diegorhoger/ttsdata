@@ -1,28 +1,83 @@
 {
-  "data": {
-    "videos": [
-      {
-        "id": "<REDACTED>",
-        "title": "<REDACTED>",
-        "video_description": "<REDACTED>",
-        "create_time": 0,
-        "cover_image_url": "<REDACTED>",
-        "share_url": "<REDACTED>",
-        "duration": 0,
-        "height": 0,
-        "width": 0,
-        "like_count": 0,
-        "comment_count": 0,
-        "share_count": 0,
-        "view_count": 0
+  "_note": "Sanitized from live authenticated POST /v2/video/list/ responses. Both pages are recorded so the pagination claim is substantiated by the fixture itself.",
+  "page1": {
+    "request": {
+      "max_count": 20
+    },
+    "response": {
+      "status": 200,
+      "data": {
+        "videos": [
+          {
+            "share_url": "<REDACTED>",
+            "title": "<REDACTED>",
+            "video_description": "<REDACTED>",
+            "width": "<NUMBER>",
+            "comment_count": "<NUMBER>",
+            "cover_image_url": "<REDACTED>",
+            "like_count": "<NUMBER>",
+            "id": "<REDACTED>",
+            "share_count": "<NUMBER>",
+            "view_count": "<NUMBER>",
+            "create_time": "<NUMBER>",
+            "duration": "<NUMBER>",
+            "height": "<NUMBER>"
+          }
+        ],
+        "videoCount": 20,
+        "cursor": "<NUMBER>",
+        "cursorKind": "number",
+        "has_more": true
+      },
+      "error": {
+        "code": "ok",
+        "message": "",
+        "log_id": "<REDACTED>"
       }
-    ],
-    "cursor": 0,
-    "has_more": true
+    }
   },
-  "error": {
-    "code": "ok",
-    "message": "",
-    "log_id": "<REDACTED>"
+  "page2": {
+    "request": {
+      "max_count": 20,
+      "cursor": "<cursor from page1>"
+    },
+    "response": {
+      "status": 200,
+      "data": {
+        "videos": [
+          {
+            "cover_image_url": "<REDACTED>",
+            "height": "<NUMBER>",
+            "share_url": "<REDACTED>",
+            "video_description": "<REDACTED>",
+            "view_count": "<NUMBER>",
+            "width": "<NUMBER>",
+            "title": "<REDACTED>",
+            "comment_count": "<NUMBER>",
+            "create_time": "<NUMBER>",
+            "duration": "<NUMBER>",
+            "id": "<REDACTED>",
+            "like_count": "<NUMBER>",
+            "share_count": "<NUMBER>"
+          }
+        ],
+        "videoCount": 20,
+        "cursor": "<NUMBER>",
+        "cursorKind": "number",
+        "has_more": true
+      },
+      "error": {
+        "code": "ok",
+        "message": "",
+        "log_id": "<REDACTED>"
+      }
+    }
+  },
+  "paginationObservation": {
+    "page1Count": 20,
+    "page2Count": 20,
+    "idOverlapBetweenPages": 0,
+    "cursorChangedBetweenPages": true,
+    "conclusion": "cursor advanced; pages contain disjoint items"
   }
 }

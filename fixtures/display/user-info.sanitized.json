@@ -1,13 +1,14 @@
 {
+  "_note": "Sanitized from a live authenticated GET /v2/user/info/ response. Identifiers and names are <REDACTED>; numeric metrics are <NUMBER> so the presence and TYPE of a value is provable without asserting a specific value. 0 is never substituted, because 0 is itself a meaningful metric value.",
   "data": {
     "user": {
+      "following_count": "<NUMBER>",
+      "likes_count": "<NUMBER>",
       "open_id": "<REDACTED>",
-      "display_name": "<REDACTED>",
+      "video_count": "<NUMBER>",
       "avatar_url": "<REDACTED>",
-      "follower_count": 0,
-      "following_count": 0,
-      "likes_count": 0,
-      "video_count": 0
+      "display_name": "<REDACTED>",
+      "follower_count": "<NUMBER>"
     }
   },
   "error": {

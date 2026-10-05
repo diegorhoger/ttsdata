@@ -1,7 +1,0 @@
-{
-  "error": {
-    "code": "invalid_params",
-    "message": "max_count needs to be in the range of [1, 20]",
-    "log_id": "<REDACTED>"
-  }
-}

@@ -79,11 +79,64 @@ about what TikTok returns.
 
 ### LIVE PROBE RESULTS (2026-10-05)
 
-A controlled authenticated TikTok Display observation was performed. **This is the first
-run with `PROBE_VERIFIED` entries.**
+A controlled authenticated TikTok Display observation was performed. Row-level matrix:
 
-| # | Assertion | Classification | Observation |
-|---|---|---|---|
+| # | Claim | Previous | Candidate | Supporting fixture | Limitation |
+|---|---|---|---|---|---|
+| A1 | OAuth lifecycle orchestration (our code) | CODE_VERIFIED | CODE_VERIFIED | — | unchanged |
+| A2 | live start → provider → callback | DOC_VERIFIED | **PROBE_VERIFIED** | — (audit record) | — |
+| A3 | authorization-code exchange succeeded | DOC_VERIFIED | **PROBE_VERIFIED** | — (audit `authorization_callback: success`) | — |
+| A4 | granted scope set | SCOPE_AVAILABLE | **PROBE_VERIFIED** | — | all three granted |
+| A5 | complete key+secret pair | NOT_OBSERVED | **PROBE_VERIFIED** | — | provider accepted the exchange |
+| B1 | `GET /v2/user/info/` 200 + envelope | DOC_VERIFIED | **PROBE_VERIFIED** | user-info.sanitized.json | — |
+| B2 | profile field set (7 fields) | DOC_VERIFIED | **PROBE_VERIFIED** | user-info.sanitized.json | — |
+| B3 | `user.info.profile` fields | DOC_VERIFIED | **NOT_GRANTED** | — | scope not granted |
+| C1 | `POST /v2/video/list/` request shape | DOC_VERIFIED | **PROBE_VERIFIED** | video-list.sanitized.json | — |
+| C2 | video-list envelope | DOC_VERIFIED | **PROBE_VERIFIED** | video-list.sanitized.json | — |
+| C3 | cursor advancement across ≥2 pages | NOT_OBSERVED | **PROBE_VERIFIED** | video-list.sanitized.json (`paginationObservation`) | — |
+| C4 | `has_more` behaviour | DOC_VERIFIED | **PROBE_VERIFIED** | video-list.sanitized.json | true on both pages |
+| C5 | `max_count` documented maximum | DOC_VERIFIED | **PROBE_VERIFIED** | max-count-boundary.sanitized.json | 50 → 400 |
+| D1 | video field set (13 fields) | DOC_VERIFIED | **PROBE_VERIFIED** | video-list.sanitized.json | — |
+| E1 | cover-image URL lifetime | DOC_VERIFIED | DOC_VERIFIED | — | not re-confirmed (L2) |
+| F1 | provider error-envelope shape | DOC_VERIFIED | **PROBE_VERIFIED** | max-count-boundary.sanitized.json | — |
+
+**PROBE_VERIFIED count = 14**, reconciled arithmetically:
+A2, A3, A4, A5 (4) + B1, B2 (2) + C1, C2, C3, C4, C5 (5) + D1 (1) + F1 (1) = **14**.
+A1 remains CODE_VERIFIED. B3 is NOT_GRANTED. E1 remains DOC_VERIFIED.
+No row was promoted without a live observation.
+
+### Pagination — substantiated by the fixture
+
+`fixtures/display/video-list.sanitized.json` → `paginationObservation`:
+`page1Count: 20`, `page2Count: 20`, `idOverlapBetweenPages: 0`,
+`cursorChangedBetweenPages: true`. Page 2 was requested using page 1's cursor.
+Both pages report `has_more: true`.
+
+### Redaction convention
+
+Identifiers, names and URLs → `<REDACTED>`. Numeric metrics → `<NUMBER>`.
+
+`<NUMBER>` is used deliberately instead of `0`: **0 is a meaningful value** for
+`follower_count`, `view_count`, `create_time` and `cursor`, so substituting 0 would
+assert something the observation did not. `<NUMBER>` proves a value of the correct
+TYPE was present without inventing a magnitude.
+
+### Absence is recorded as absence
+
+**Not observed in the profile response:** `union_id`, `avatar_url_100`, `avatar_large_url`.
+**Not observed in the video response:** `is_aigc`, `embed_link`.
+These are recorded as absent — not `null`, not `0`, not empty string, and not added to
+any fixture to satisfy a schema.
+
+### Sanitized fixtures
+
+- `fixtures/display/user-info.sanitized.json`
+- `fixtures/display/video-list.sanitized.json` (both pages + pagination observation)
+- `fixtures/display/max-count-boundary.sanitized.json` (400 + error envelope)
+
+No tokens, authorization codes, OAuth state, account identifiers, PII, or live CDN URLs.
+
+---|---|---|---|
 | A1 | TTSData Display OAuth lifecycle orchestration | `CODE_VERIFIED` | unchanged |
 | A2 | Live TikTok start → provider → callback | **`PROBE_VERIFIED`** | consent granted; callback carried `code`,`scopes`,`state` |
 | A3 | Authorization-code exchange | **`PROBE_VERIFIED`** | audit `authorization_callback: success`; connection persisted |

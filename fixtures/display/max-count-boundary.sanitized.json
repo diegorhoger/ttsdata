@@ -1,0 +1,14 @@
+{
+  "_note": "Sanitized from a live POST /v2/video/list/ with max_count=50.",
+  "request": {
+    "max_count": 50
+  },
+  "response": {
+    "status": 400,
+    "error": {
+      "code": "invalid_params",
+      "message": "max_count needs to be in the range of [1, 20]",
+      "log_id": "<REDACTED>"
+    }
+  }
+}
