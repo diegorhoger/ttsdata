@@ -1,0 +1,46 @@
+{
+  "_note": "Sanitized from the display_audit table and display_connections row produced by the live OAuth run in the isolated probe environment. Contains ONLY the event/outcome and classification information required to substantiate A2-A5. No authorization material, no credentials of any kind, no account or provider identifiers, and no URLs are reproduced.",
+  "authorizationLifecycle": [
+    {
+      "action": "authorization_start",
+      "outcome": "success",
+      "metadata": {
+        "scopes": [
+          "user.info.basic",
+          "user.info.stats",
+          "video.list"
+        ]
+      }
+    },
+    {
+      "action": "authorization_callback",
+      "outcome": "success",
+      "metadata": {
+        "scopes": [
+          "user.info.basic",
+          "user.info.stats",
+          "video.list"
+        ]
+      }
+    }
+  ],
+  "connectionOutcome": {
+    "provider": "tiktok_display",
+    "status": "active",
+    "scopes": [
+      "user.info.basic",
+      "user.info.stats",
+      "video.list"
+    ],
+    "revision": 1,
+    "revoked": false,
+    "disconnected": false
+  },
+  "_substantiates": {
+    "A2": "authorization_callback reached success for a live provider redirect \u2014 the callback was processed end to end",
+    "A3": "the callback reached success, which the code path only does AFTER a successful authorization-code exchange",
+    "A4": "connectionOutcome.scopes records the granted set actually persisted",
+    "A5": "the exchange completed with the configured provider credential; a rejected credential would have produced authorization_callback outcome=failure"
+  },
+  "_limitation": "The exchange's own provider response is not committed here. A3/A5 are substantiated by the callback reaching `success`, which in the committed code path is unreachable without a completed exchange. This is durable local evidence, not an independent provider receipt."
+}

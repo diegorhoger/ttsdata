@@ -77,11 +77,112 @@ about what TikTok returns.
 | G1 | Display-only family boundary (no Shop host/scope) | `CODE_VERIFIED` — enforced in `display/capability.ts`, tested in `tests/display/capability.test.ts` |
 | G2 | Credential encryption, tenant isolation, truthful revocation, kill switch | `CODE_VERIFIED` — Issue #20 tests |
 
-**`PROBE_VERIFIED` entries: 0.** No controlled authenticated TikTok observation has been
-recorded, so the label is unused in this matrix. `CODE_VERIFIED` entries describe our own
-implementation and carry no claim about provider behaviour.
+### LIVE PROBE RESULTS (2026-10-05)
 
----
+A controlled authenticated TikTok Display observation was performed. The matrix and the
+count below are **generated from `fixtures/display/classification.json`**, the authoritative
+structured classification source. The validator derives the count from that file and fails
+if the document disagrees, so the count cannot drift from the rows.
+
+| # | Claim | Previous | Current | Supporting fixture | Limitation |
+|---|---|---|---|---|---|
+| A1 | OAuth lifecycle orchestration (our code) | CODE_VERIFIED | CODE_VERIFIED | — | unchanged |
+| A2 | live start -> provider -> callback | DOC_VERIFIED | **PROBE_VERIFIED** | `oauth-audit.sanitized.json` | — |
+| A3 | authorization-code exchange succeeded | DOC_VERIFIED | CODE_VERIFIED | `oauth-audit.sanitized.json` | exchange inferred from local durable state (callback success + active connection); the provider's exchange response is not retained, so this is not an independent provider observation |
+| A4 | granted scope set | SCOPE_AVAILABLE | **PROBE_VERIFIED** | `oauth-audit.sanitized.json` | all three granted |
+| A5 | complete key+secret pair | NOT_OBSERVED | CODE_VERIFIED | `oauth-audit.sanitized.json` | provider acceptance of the client credential is inferred from the same local durable state; no retained provider receipt |
+| B1 | GET /v2/user/info/ 200 + envelope | DOC_VERIFIED | **PROBE_VERIFIED** | `user-info.sanitized.json` | — |
+| B2 | profile field set (7 fields) | DOC_VERIFIED | **PROBE_VERIFIED** | `user-info.sanitized.json` | — |
+| B3 | user.info.profile fields | DOC_VERIFIED | NOT_GRANTED | — | scope not granted |
+| C1 | POST /v2/video/list/ request shape | DOC_VERIFIED | **PROBE_VERIFIED** | `video-list.sanitized.json` | — |
+| C2 | video-list envelope | DOC_VERIFIED | **PROBE_VERIFIED** | `video-list.sanitized.json` | — |
+| C3 | cursor advancement across >=2 pages | NOT_OBSERVED | **PROBE_VERIFIED** | `video-list.sanitized.json` | — |
+| C4 | has_more behaviour | DOC_VERIFIED | **PROBE_VERIFIED** | `video-list.sanitized.json` | true on both pages |
+| C5 | max_count documented maximum | DOC_VERIFIED | **PROBE_VERIFIED** | `max-count-boundary.sanitized.json` | 50 -> 400 |
+| D1 | video field set (13 fields) | DOC_VERIFIED | **PROBE_VERIFIED** | `video-list.sanitized.json` | — |
+| E1 | cover-image URL lifetime | DOC_VERIFIED | DOC_VERIFIED | — | not re-confirmed (L2) |
+| F1 | provider error-envelope shape | DOC_VERIFIED | **PROBE_VERIFIED** | `max-count-boundary.sanitized.json` | — |
+
+**PROBE_VERIFIED count = 11**, reconciled arithmetically: 1 + 1 + 2 + 5 + 1 + 1 = **11**.
+A1 and A3/A5 are CODE_VERIFIED. B3 is NOT_GRANTED. E1 remains DOC_VERIFIED.
+
+### A3 and A5 are deliberately NOT PROBE_VERIFIED
+
+The provider's authorization-code exchange response is **not retained**. Callback success
+plus an active persisted connection are durable **local execution** evidence from which a
+completed exchange is inferred through the committed code path. That is stronger than
+documentation but weaker than a retained provider observation, so both rows are
+`CODE_VERIFIED` with the basis recorded, rather than promoted.
+
+**A2** (live start -> provider -> callback) and **A4** (granted scope set) remain
+`PROBE_VERIFIED`: the callback itself was observed, and the granted scope set is recorded
+in the persisted connection outcome.
+
+### Fixture-backed invariant
+
+Every `PROBE_VERIFIED` row must name a fixture that exists **and** passes fixture-specific
+structural validation. The validator fails otherwise, so an unsupported promotion cannot
+enter `classification.json` silently. This enforces durable committed support; it does
+**not** claim cryptographic provider provenance.
+
+### Pagination evidence
+
+`fixtures/display/video-list.sanitized.json` records a **fingerprint for every
+observed item** on each page, plus a fingerprint for each page's cursor. Pagination
+is therefore **recomputable from the committed artifact** rather than asserted:
+
+| Derived fact | Method |
+|---|---|
+| page 1 item count | `len(page1...itemFingerprints)` |
+| page 2 item count | `len(page2...itemFingerprints)` |
+| cross-page overlap | `len(set(p1) & set(p2))` |
+| cursor advanced | `p1.cursorFingerprint != p2.cursorFingerprint` |
+| page 2 continuity | `page2.request.cursorFingerprint == page1.cursorFingerprint` |
+| `has_more` | read from each page's `has_more` |
+
+The `paginationObservation` block states the derived result for the matrix, but the
+validator **recomputes** it from the fingerprints and fails if they disagree.
+
+**Fingerprint method.** HMAC-SHA256 over domain-separated inputs — `item:<id>` and
+`cursor:<cursor>` — using a **fresh 32-byte random salt generated for this capture
+and destroyed immediately afterwards**. The salt is not committed, not logged, not
+in PR text, and not retained. Without the salt the digests are non-reversible.
+Domain separation prevents an item value and a cursor value from producing
+interchangeable evidence. Only 24 hex characters are retained, which is ample for
+equality and intersection testing while further reducing any lookup surface.
+
+**Consequence, stated honestly:** because the salt is destroyed, a third party
+cannot recompute these fingerprints from raw provider data. They can verify
+*internal consistency* — counts, disjointness, cursor advancement — which is what
+the pagination claim requires. They cannot independently re-derive the same digests.
+
+### Redaction semantics
+
+Two distinct things are recorded, and they must not be conflated:
+
+- **Fixture representation** — identifiers/names/URLs become the JSON string
+  `<REDACTED>`; numeric metrics become the JSON string `<NUMBER>`.
+- **Provider-observed original type** — recorded separately as evidence metadata in
+  each fixture's `_observedTypes` block, because replacing a JSON number with a JSON
+  string does NOT preserve the provider's original JSON type.
+
+The fixture therefore does not claim that `<NUMBER>` *is* a number. It claims the
+observed value was a number, recorded as metadata.
+
+### Absence is recorded as absence
+
+**Not observed in the profile response:** `union_id`, `avatar_url_100`, `avatar_large_url`.
+**Not observed in the video response:** `is_aigc`, `embed_link`.
+These are absent from the fixtures — not `null`, not `0`, not empty string, and not
+added to satisfy a schema.
+
+### Sanitized fixtures
+
+- `fixtures/display/user-info.sanitized.json`
+- `fixtures/display/video-list.sanitized.json` (both pages, fingerprints, pagination)
+- `fixtures/display/max-count-boundary.sanitized.json` (400 + error envelope)
+
+No tokens, authorization codes, OAuth state, account identifiers, PII, or live CDN URLs.
 
 ## Limitations
 

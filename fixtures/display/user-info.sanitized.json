@@ -1,0 +1,29 @@
+{
+  "_note": "Sanitized from a live authenticated GET /v2/user/info/ response.",
+  "_redaction": "Identifiers/names/URLs -> <REDACTED>. Numeric metrics -> <NUMBER> (a JSON string). <NUMBER> does NOT preserve the provider's JSON number type; the observed provider type is recorded separately in _observedTypes. 0 is never substituted because 0 is itself a meaningful metric value.",
+  "_observedTypes": {
+    "open_id": "string",
+    "display_name": "string",
+    "avatar_url": "string",
+    "follower_count": "number",
+    "following_count": "number",
+    "likes_count": "number",
+    "video_count": "number"
+  },
+  "data": {
+    "user": {
+      "open_id": "<REDACTED>",
+      "display_name": "<REDACTED>",
+      "avatar_url": "<REDACTED>",
+      "follower_count": "<NUMBER>",
+      "following_count": "<NUMBER>",
+      "likes_count": "<NUMBER>",
+      "video_count": "<NUMBER>"
+    }
+  },
+  "error": {
+    "code": "ok",
+    "message": "",
+    "log_id": "<REDACTED>"
+  }
+}

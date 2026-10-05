@@ -1,0 +1,135 @@
+{
+  "_note": "Authoritative structured classification for the live probe. The evidence document's matrix and the PROBE_VERIFIED count are DERIVED from this file by the validator, so the count cannot drift from the rows.",
+  "version": "v1",
+  "claims": [
+    {
+      "id": "A1",
+      "claim": "OAuth lifecycle orchestration (our code)",
+      "previous": "CODE_VERIFIED",
+      "current": "CODE_VERIFIED",
+      "fixture": null,
+      "limitation": "unchanged"
+    },
+    {
+      "id": "A2",
+      "claim": "live start -> provider -> callback",
+      "previous": "DOC_VERIFIED",
+      "current": "PROBE_VERIFIED",
+      "fixture": "oauth-audit.sanitized.json",
+      "limitation": null
+    },
+    {
+      "id": "A3",
+      "claim": "authorization-code exchange succeeded",
+      "previous": "DOC_VERIFIED",
+      "current": "CODE_VERIFIED",
+      "fixture": "oauth-audit.sanitized.json",
+      "limitation": "exchange inferred from local durable state (callback success + active connection); the provider's exchange response is not retained, so this is not an independent provider observation"
+    },
+    {
+      "id": "A4",
+      "claim": "granted scope set",
+      "previous": "SCOPE_AVAILABLE",
+      "current": "PROBE_VERIFIED",
+      "fixture": "oauth-audit.sanitized.json",
+      "limitation": "all three granted"
+    },
+    {
+      "id": "A5",
+      "claim": "complete key+secret pair",
+      "previous": "NOT_OBSERVED",
+      "current": "CODE_VERIFIED",
+      "fixture": "oauth-audit.sanitized.json",
+      "limitation": "provider acceptance of the client credential is inferred from the same local durable state; no retained provider receipt"
+    },
+    {
+      "id": "B1",
+      "claim": "GET /v2/user/info/ 200 + envelope",
+      "previous": "DOC_VERIFIED",
+      "current": "PROBE_VERIFIED",
+      "fixture": "user-info.sanitized.json",
+      "limitation": null
+    },
+    {
+      "id": "B2",
+      "claim": "profile field set (7 fields)",
+      "previous": "DOC_VERIFIED",
+      "current": "PROBE_VERIFIED",
+      "fixture": "user-info.sanitized.json",
+      "limitation": null
+    },
+    {
+      "id": "B3",
+      "claim": "user.info.profile fields",
+      "previous": "DOC_VERIFIED",
+      "current": "NOT_GRANTED",
+      "fixture": null,
+      "limitation": "scope not granted"
+    },
+    {
+      "id": "C1",
+      "claim": "POST /v2/video/list/ request shape",
+      "previous": "DOC_VERIFIED",
+      "current": "PROBE_VERIFIED",
+      "fixture": "video-list.sanitized.json",
+      "limitation": null
+    },
+    {
+      "id": "C2",
+      "claim": "video-list envelope",
+      "previous": "DOC_VERIFIED",
+      "current": "PROBE_VERIFIED",
+      "fixture": "video-list.sanitized.json",
+      "limitation": null
+    },
+    {
+      "id": "C3",
+      "claim": "cursor advancement across >=2 pages",
+      "previous": "NOT_OBSERVED",
+      "current": "PROBE_VERIFIED",
+      "fixture": "video-list.sanitized.json",
+      "limitation": null
+    },
+    {
+      "id": "C4",
+      "claim": "has_more behaviour",
+      "previous": "DOC_VERIFIED",
+      "current": "PROBE_VERIFIED",
+      "fixture": "video-list.sanitized.json",
+      "limitation": "true on both pages"
+    },
+    {
+      "id": "C5",
+      "claim": "max_count documented maximum",
+      "previous": "DOC_VERIFIED",
+      "current": "PROBE_VERIFIED",
+      "fixture": "max-count-boundary.sanitized.json",
+      "limitation": "50 -> 400"
+    },
+    {
+      "id": "D1",
+      "claim": "video field set (13 fields)",
+      "previous": "DOC_VERIFIED",
+      "current": "PROBE_VERIFIED",
+      "fixture": "video-list.sanitized.json",
+      "limitation": null
+    },
+    {
+      "id": "E1",
+      "claim": "cover-image URL lifetime",
+      "previous": "DOC_VERIFIED",
+      "current": "DOC_VERIFIED",
+      "fixture": null,
+      "limitation": "not re-confirmed (L2)"
+    },
+    {
+      "id": "F1",
+      "claim": "provider error-envelope shape",
+      "previous": "DOC_VERIFIED",
+      "current": "PROBE_VERIFIED",
+      "fixture": "max-count-boundary.sanitized.json",
+      "limitation": null
+    }
+  ],
+  "_taxonomyNote": "A3 and A5 are CODE_VERIFIED, not PROBE_VERIFIED: the provider's exchange response is not retained. Callback success plus an active persisted connection are durable LOCAL execution evidence from which a completed exchange is inferred through the committed code path. That is stronger than documentation but weaker than a retained provider observation, so it is not PROBE_VERIFIED."
+}
