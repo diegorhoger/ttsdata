@@ -14,6 +14,8 @@ on:
       - 'apps/api/**'
       - 'packages/**'
       - 'scripts/verify-api-container.sh'
+      - 'scripts/verify-display-evidence.sh'
+      - 'fixtures/display/**'
       - 'pnpm-lock.yaml'
       - 'railway.json'
       - '.github/workflows/api-container.yml'

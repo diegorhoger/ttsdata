@@ -1,0 +1,34 @@
+name: Display evidence validator
+
+# Runs the evidence-package validation gate on PRs that touch the evidence
+# package. The validator is load-bearing for the PROBE_VERIFIED classifications
+# (Issue #65), so it must run automatically rather than only when invoked
+# manually.
+#
+# This is a pure gate: it does not modify classification.json, the evidence
+# fixtures, or the evidence document. It only verifies that the committed
+# evidence package is internally consistent and that the PROBE_VERIFIED count
+# matches the classification source.
+
+on:
+  pull_request:
+    paths:
+      - 'docs/display-probe-evidence.md'
+      - 'fixtures/display/**'
+      - 'scripts/verify-display-evidence.sh'
+      - '.github/workflows/display-evidence-validator.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run the display evidence validator
+        run: bash scripts/verify-display-evidence.sh
