@@ -35,6 +35,7 @@ import {
   CapabilityError,
   DisplayApiAdapter,
   DisplayApiError,
+  DisplaySyncService,
   OAuthRepository,
   buildAuthorizeUrl,
   assertDisplayEndpointAllowed,
@@ -526,5 +527,81 @@ export async function registerDisplayRoutes(app: FastifyInstance, options: Displ
     const auth = request.auth!;
     const evidence = await repository.listProbeEvidence(auth.workspaceId, auth.userId);
     return reply.send({ evidence });
+  });
+
+  // -------------------------------------------------------------- sync (Issue #21)
+
+  const syncService = new DisplaySyncService({ repository, adapter, config });
+
+  /** Trigger a profile sync. */
+  app.post('/connections/:connectionId/sync/profile', { preHandler: [authenticate, authorizeWrite] }, async (request, reply) => {
+    const auth = request.auth!;
+    const { connectionId } = parse(connectionParams, request.params);
+    try {
+      const result = await syncService.syncProfile(auth.workspaceId, auth.userId, connectionId);
+      return reply.send({ result });
+    } catch (error) {
+      translate(error);
+    }
+  });
+
+  /** Trigger a video sync with cursor pagination. */
+  app.post('/connections/:connectionId/sync/videos', { preHandler: [authenticate, authorizeWrite] }, async (request, reply) => {
+    const auth = request.auth!;
+    const { connectionId } = parse(connectionParams, request.params);
+    try {
+      const result = await syncService.syncVideos(auth.workspaceId, auth.userId, connectionId);
+      return reply.send({ result });
+    } catch (error) {
+      translate(error);
+    }
+  });
+
+  /** List sync runs for a connection. */
+  app.get('/connections/:connectionId/sync/runs', { preHandler: authenticate }, async (request, reply) => {
+    const auth = request.auth!;
+    const { connectionId } = parse(connectionParams, request.params);
+    try {
+      const runs = await syncService.listSyncRuns(auth.workspaceId, auth.userId, connectionId);
+      return reply.send({ runs });
+    } catch (error) {
+      translate(error);
+    }
+  });
+
+  /** Get the current profile for a connection. */
+  app.get('/connections/:connectionId/profile', { preHandler: authenticate }, async (request, reply) => {
+    const auth = request.auth!;
+    const { connectionId } = parse(connectionParams, request.params);
+    try {
+      const profile = await syncService.getProfile(auth.workspaceId, auth.userId, connectionId);
+      return reply.send({ profile });
+    } catch (error) {
+      translate(error);
+    }
+  });
+
+  /** List videos for a connection. */
+  app.get('/connections/:connectionId/videos', { preHandler: authenticate }, async (request, reply) => {
+    const auth = request.auth!;
+    const { connectionId } = parse(connectionParams, request.params);
+    try {
+      const videos = await syncService.listVideos(auth.workspaceId, auth.userId, connectionId);
+      return reply.send({ videos });
+    } catch (error) {
+      translate(error);
+    }
+  });
+
+  /** List metric provenance for a connection. */
+  app.get('/connections/:connectionId/metrics', { preHandler: authenticate }, async (request, reply) => {
+    const auth = request.auth!;
+    const { connectionId } = parse(connectionParams, request.params);
+    try {
+      const metrics = await syncService.listMetrics(auth.workspaceId, auth.userId, connectionId);
+      return reply.send({ metrics });
+    } catch (error) {
+      translate(error);
+    }
   });
 }
