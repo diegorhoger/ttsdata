@@ -14,7 +14,7 @@
  * - Tenant isolation: every query is scoped by (workspace_id, user_id)
  */
 
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { Pool } from 'pg';
 import { CredentialCipher, credentialContext, loadCredentialCipher } from '../credential-crypto';
 import { DisplayApiAdapter, DisplayApiError } from './adapter';
@@ -33,6 +33,10 @@ import {
 const MAX_PAGES_PER_SYNC = 100;
 /** Maximum number of videos to fetch in a single sync run. */
 const MAX_VIDEOS_PER_SYNC = 2000;
+/** Backoff base in milliseconds for retried sync jobs. */
+const BACKOFF_BASE_MS = 2000;
+/** Maximum backoff in milliseconds. */
+const BACKOFF_MAX_MS = 300000;
 
 export type DisplaySyncKind = 'profile_sync' | 'video_sync';
 export type DisplaySyncStatus = 'succeeded' | 'failed' | 'partial';
@@ -62,7 +66,16 @@ function hashProviderId(cipher: CredentialCipher, connectionId: string, rawId: s
 }
 
 /**
+ * Computes a deterministic SHA-256 hash of a payload for idempotent snapshotting.
+ * Same payload always produces the same hash, enabling replay detection.
+ */
+function payloadHash(payload: unknown): string {
+  return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+}
+
+/**
  * Parses a TikTok user/info response into a normalized profile record.
+ * Provider envelope: { data: { user: {...} }, error: {...} }.
  * Missing fields remain missing/null — never defaulted to zero.
  */
 function parseProfileResponse(data: Record<string, unknown>): {
@@ -73,7 +86,8 @@ function parseProfileResponse(data: Record<string, unknown>): {
   likesCount: number | null;
   videoCount: number | null;
 } {
-  const user = (data.user ?? data) as Record<string, unknown>;
+  const inner = (data.data ?? data) as Record<string, unknown>;
+  const user = (inner.user ?? inner) as Record<string, unknown>;
   return {
     displayName: typeof user.display_name === 'string' ? user.display_name : null,
     avatarUrl: typeof user.avatar_url === 'string' ? user.avatar_url : null,
@@ -111,9 +125,10 @@ function parseVideoListResponse(data: Record<string, unknown>): {
   cursor: string | null;
   hasMore: boolean;
 } {
-  const videos = Array.isArray(data.videos) ? data.videos : [];
-  const cursor = typeof data.cursor === 'string' ? data.cursor : null;
-  const hasMore = data.has_more === true;
+  const inner = (data.data ?? data) as Record<string, unknown>;
+  const videos = Array.isArray(inner.videos) ? inner.videos : [];
+  const cursor = typeof inner.cursor === 'string' ? inner.cursor : null;
+  const hasMore = inner.has_more === true;
 
   return {
     videos: videos.map((v): ParsedVideo => {
@@ -278,14 +293,24 @@ export class DisplaySyncService {
       let hasMore = true;
       let cursor: string | null = null;
 
+      // Resume from checkpoint if one exists from a previous partial run
+      const checkpoint = await this.getCursorCheckpoint(workspaceId, userId, connectionId);
+      if (checkpoint) {
+        cursor = checkpoint.cursor;
+        itemsProcessed = checkpoint.itemsProcessed;
+        pagesProcessed = checkpoint.pagesProcessed;
+      }
+
       while (hasMore && pagesProcessed < MAX_PAGES_PER_SYNC && itemsProcessed < MAX_VIDEOS_PER_SYNC) {
-        // Fetch page from provider
-        const result = await this.adapter.fetchVideoList(stored.accessToken, 20);
+        // Fetch page from provider with cursor pagination
+        const result = await this.adapter.fetchVideoList(stored.accessToken, 20, cursor);
 
         if (!result.ok || !result.data) {
           const errorCode = result.errorCode ?? 'provider_error';
+          // Persist checkpoint before failing so retry/resume does not duplicate committed data
+          await this.persistCursorCheckpoint(workspaceId, userId, connectionId, cursor, itemsProcessed, pagesProcessed);
           await this.failSyncRun(syncRunId, errorCode);
-          return { syncRunId, status: 'failed', itemsProcessed, pagesProcessed, errorCode };
+          return { syncRunId, status: 'partial', itemsProcessed, pagesProcessed, errorCode };
         }
 
         const page = parseVideoListResponse(result.data);
@@ -324,10 +349,15 @@ export class DisplaySyncService {
           { metricName: 'view_count', classification: 'observed', sourceEndpoint: '/v2/video/list/', scopes: connection.scopes },
         ]);
 
+        // Persist cursor checkpoint after each page
         hasMore = page.hasMore;
         cursor = page.cursor;
         lastCursor = cursor;
+        await this.persistCursorCheckpoint(workspaceId, userId, connectionId, cursor, itemsProcessed, pagesProcessed);
       }
+
+      // Clear checkpoint on successful completion
+      await this.clearCursorCheckpoint(workspaceId, userId, connectionId);
 
       // Update connection last_sync_at
       await this.updateConnectionLastSync(workspaceId, userId, connectionId);
@@ -353,8 +383,8 @@ export class DisplaySyncService {
     syncRunId: string,
   ): Promise<void> {
     await this.pool.query(
-      `INSERT INTO display_sync_runs (workspace_id, user_id, connection_id, kind, status, started_at, id)
-       VALUES ($1, $2, $3, $4, 'running', NOW(), $5)`,
+      `INSERT INTO display_sync_runs (workspace_id, user_id, connection_id, kind, status, started_at, id, cursor_checkpoint)
+       VALUES ($1, $2, $3, $4, 'running', NOW(), $5, NULL)`,
       [workspaceId, userId, connectionId, kind, syncRunId],
     );
   }
@@ -419,11 +449,12 @@ export class DisplaySyncService {
     provenance: Record<string, unknown>,
     observedAt: Date,
   ): Promise<void> {
+    const ph = payloadHash(profile);
     await this.pool.query(
-      `INSERT INTO display_profile_snapshots (workspace_id, user_id, connection_id, provider_account_hash, display_name, avatar_url, follower_count, following_count, likes_count, video_count, provenance, observed_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12)
-       ON CONFLICT (workspace_id, connection_id, observed_at) DO NOTHING`,
-      [workspaceId, userId, connectionId, providerAccountHash, profile.displayName, profile.avatarUrl, profile.followerCount, profile.followingCount, profile.likesCount, profile.videoCount, JSON.stringify(provenance), observedAt],
+      `INSERT INTO display_profile_snapshots (workspace_id, user_id, connection_id, provider_account_hash, display_name, avatar_url, follower_count, following_count, likes_count, video_count, provenance, observed_at, payload_hash)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13)
+       ON CONFLICT (workspace_id, connection_id, payload_hash) DO NOTHING`,
+      [workspaceId, userId, connectionId, providerAccountHash, profile.displayName, profile.avatarUrl, profile.followerCount, profile.followingCount, profile.likesCount, profile.videoCount, JSON.stringify(provenance), observedAt, ph],
     );
   }
 
@@ -467,11 +498,12 @@ export class DisplaySyncService {
     provenance: Record<string, unknown>,
     observedAt: Date,
   ): Promise<void> {
+    const ph = payloadHash(video);
     await this.pool.query(
-      `INSERT INTO display_video_snapshots (workspace_id, user_id, connection_id, provider_video_hash, like_count, comment_count, share_count, view_count, provenance, observed_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
-       ON CONFLICT (workspace_id, connection_id, provider_video_hash, observed_at) DO NOTHING`,
-      [workspaceId, userId, connectionId, providerVideoHash, video.likeCount, video.commentCount, video.shareCount, video.viewCount, JSON.stringify(provenance), observedAt],
+      `INSERT INTO display_video_snapshots (workspace_id, user_id, connection_id, provider_video_hash, like_count, comment_count, share_count, view_count, provenance, observed_at, payload_hash)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11)
+       ON CONFLICT (workspace_id, connection_id, provider_video_hash, payload_hash) DO NOTHING`,
+      [workspaceId, userId, connectionId, providerVideoHash, video.likeCount, video.commentCount, video.shareCount, video.viewCount, JSON.stringify(provenance), observedAt, ph],
     );
   }
 
@@ -500,6 +532,64 @@ export class DisplaySyncService {
     await this.pool.query(
       `UPDATE display_connections SET last_sync_at = NOW(), updated_at = NOW()
        WHERE workspace_id = $1 AND user_id = $2 AND id = $3`,
+      [workspaceId, userId, connectionId],
+    );
+  }
+
+  // ------------------------------------------------------------------ cursor checkpoints
+
+  private async getCursorCheckpoint(
+    workspaceId: string,
+    userId: string,
+    connectionId: string,
+  ): Promise<{ cursor: string | null; itemsProcessed: number; pagesProcessed: number } | null> {
+    const result = await this.pool.query<{ cursor_checkpoint: string | null; items_processed: number; pages_processed: number }>(
+      `SELECT cursor_checkpoint, items_processed, pages_processed
+       FROM display_sync_runs
+       WHERE workspace_id = $1 AND user_id = $2 AND connection_id = $3
+         AND status = 'partial'
+       ORDER BY started_at DESC LIMIT 1`,
+      [workspaceId, userId, connectionId],
+    );
+    if (result.rows.length === 0) return null;
+    return {
+      cursor: result.rows[0].cursor_checkpoint,
+      itemsProcessed: result.rows[0].items_processed,
+      pagesProcessed: result.rows[0].pages_processed,
+    };
+  }
+
+  private async persistCursorCheckpoint(
+    workspaceId: string,
+    userId: string,
+    connectionId: string,
+    cursor: string | null,
+    itemsProcessed: number,
+    pagesProcessed: number,
+  ): Promise<void> {
+    await this.pool.query(
+      `UPDATE display_sync_runs
+       SET cursor_checkpoint = $4, items_processed = $5, pages_processed = $6
+       WHERE id = (
+         SELECT id FROM display_sync_runs
+         WHERE workspace_id = $1 AND user_id = $2 AND connection_id = $3
+           AND status = 'partial'
+         ORDER BY started_at DESC LIMIT 1
+       )`,
+      [workspaceId, userId, connectionId, cursor, itemsProcessed, pagesProcessed],
+    );
+  }
+
+  private async clearCursorCheckpoint(
+    workspaceId: string,
+    userId: string,
+    connectionId: string,
+  ): Promise<void> {
+    await this.pool.query(
+      `UPDATE display_sync_runs
+       SET cursor_checkpoint = NULL
+       WHERE workspace_id = $1 AND user_id = $2 AND connection_id = $3
+         AND status = 'succeeded'`,
       [workspaceId, userId, connectionId],
     );
   }

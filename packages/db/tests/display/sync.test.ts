@@ -158,19 +158,22 @@ describe('DisplaySyncService', () => {
   });
 
   describe('syncProfile', () => {
-    it('syncs a profile successfully', async () => {
+    it('syncs a profile successfully using the verified provider envelope', async () => {
       vi.spyOn(mockAdapter, 'fetchUserInfo').mockResolvedValue({
         ok: true,
         status: 200,
         data: {
-          user: {
-            display_name: 'Test User',
-            avatar_url: 'https://example.com/avatar.jpg',
-            follower_count: 100,
-            following_count: 50,
-            likes_count: 1000,
-            video_count: 10,
+          data: {
+            user: {
+              display_name: 'Test User',
+              avatar_url: 'https://example.com/avatar.jpg',
+              follower_count: 100,
+              following_count: 50,
+              likes_count: 1000,
+              video_count: 10,
+            },
           },
+          error: { code: 'ok', message: '', log_id: 'abc123' },
         },
         errorCode: null,
       });
@@ -230,21 +233,24 @@ describe('DisplaySyncService', () => {
   });
 
   describe('syncVideos', () => {
-    it('syncs videos with pagination', async () => {
+    it('syncs videos with pagination using the verified provider envelope', async () => {
       let callCount = 0;
-      vi.spyOn(mockAdapter, 'fetchVideoList').mockImplementation(async () => {
+      vi.spyOn(mockAdapter, 'fetchVideoList').mockImplementation(async (_accessToken, _maxCount, cursor) => {
         callCount++;
         if (callCount === 1) {
           return {
             ok: true,
             status: 200,
             data: {
-              videos: [
-                { id: 'v1', title: 'Video 1', like_count: 10, comment_count: 2, share_count: 1, view_count: 100 },
-                { id: 'v2', title: 'Video 2', like_count: 20, comment_count: 4, share_count: 2, view_count: 200 },
-              ],
-              cursor: 'cursor-1',
-              has_more: true,
+              data: {
+                videos: [
+                  { id: 'v1', title: 'Video 1', like_count: 10, comment_count: 2, share_count: 1, view_count: 100 },
+                  { id: 'v2', title: 'Video 2', like_count: 20, comment_count: 4, share_count: 2, view_count: 200 },
+                ],
+                cursor: 'cursor-1',
+                has_more: true,
+              },
+              error: { code: 'ok', message: '', log_id: 'abc123' },
             },
             errorCode: null,
           };
@@ -253,11 +259,14 @@ describe('DisplaySyncService', () => {
           ok: true,
           status: 200,
           data: {
-            videos: [
-              { id: 'v3', title: 'Video 3', like_count: 30, comment_count: 6, share_count: 3, view_count: 300 },
-            ],
-            cursor: 'cursor-2',
-            has_more: false,
+            data: {
+              videos: [
+                { id: 'v3', title: 'Video 3', like_count: 30, comment_count: 6, share_count: 3, view_count: 300 },
+              ],
+              cursor: 'cursor-2',
+              has_more: false,
+            },
+            error: { code: 'ok', message: '', log_id: 'def456' },
           },
           errorCode: null,
         };
@@ -275,9 +284,12 @@ describe('DisplaySyncService', () => {
         ok: true,
         status: 200,
         data: {
-          videos: [{ id: 'v1', title: 'Video 1' }],
-          cursor: 'cursor-1',
-          has_more: true,
+          data: {
+            videos: [{ id: 'v1', title: 'Video 1' }],
+            cursor: 'cursor-1',
+            has_more: true,
+          },
+          error: { code: 'ok', message: '', log_id: 'abc123' },
         },
         errorCode: null,
       });
@@ -297,9 +309,12 @@ describe('DisplaySyncService', () => {
             ok: true,
             status: 200,
             data: {
-              videos: [{ id: 'v1', title: 'Video 1' }],
-              cursor: 'cursor-1',
-              has_more: true,
+              data: {
+                videos: [{ id: 'v1', title: 'Video 1' }],
+                cursor: 'cursor-1',
+                has_more: true,
+              },
+              error: { code: 'ok', message: '', log_id: 'abc123' },
             },
             errorCode: null,
           };
@@ -314,10 +329,54 @@ describe('DisplaySyncService', () => {
 
       const result = await service.syncVideos('ws-1', 'user-1', 'conn-1');
 
-      expect(result.status).toBe('failed');
+      expect(result.status).toBe('partial');
       expect(result.errorCode).toBe('provider_rate_limited');
       expect(result.itemsProcessed).toBe(1);
       expect(result.pagesProcessed).toBe(1);
+    });
+
+    it('passes cursor to fetchVideoList on page 2', async () => {
+      const calls: Array<{ accessToken: string; maxCount: number; cursor: string | null | undefined }> = [];
+      vi.spyOn(mockAdapter, 'fetchVideoList').mockImplementation(async (accessToken, maxCount, cursor) => {
+        calls.push({ accessToken, maxCount, cursor });
+        if (calls.length === 1) {
+          return {
+            ok: true,
+            status: 200,
+            data: {
+              data: {
+                videos: [{ id: 'v1', title: 'Video 1' }],
+                cursor: 'page1-cursor',
+                has_more: true,
+              },
+              error: { code: 'ok', message: '', log_id: 'abc123' },
+            },
+            errorCode: null,
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          data: {
+            data: {
+              videos: [{ id: 'v2', title: 'Video 2' }],
+              cursor: null,
+              has_more: false,
+            },
+            error: { code: 'ok', message: '', log_id: 'def456' },
+          },
+          errorCode: null,
+        };
+      });
+
+      const result = await service.syncVideos('ws-1', 'user-1', 'conn-1');
+
+      expect(result.status).toBe('succeeded');
+      expect(result.pagesProcessed).toBe(2);
+      // Page 1: no cursor
+      expect(calls[0].cursor).toBeNull();
+      // Page 2: receives page 1's cursor
+      expect(calls[1].cursor).toBe('page1-cursor');
     });
 
     it('keeps missing video metrics as null', async () => {
@@ -325,12 +384,15 @@ describe('DisplaySyncService', () => {
         ok: true,
         status: 200,
         data: {
-          videos: [
-            { id: 'v1', title: 'Video 1' },
+          data: {
+            videos: [
+              { id: 'v1', title: 'Video 1' },
  // like_count, comment_count, share_count, view_count all missing
-          ],
-          cursor: null,
-          has_more: false,
+            ],
+            cursor: null,
+            has_more: false,
+          },
+          error: { code: 'ok', message: '', log_id: 'abc123' },
         },
         errorCode: null,
       });

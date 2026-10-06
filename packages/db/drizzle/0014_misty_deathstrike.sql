@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS "display_profile_snapshots" (
 	"video_count" integer,
 	"provenance" jsonb DEFAULT '{}'::jsonb NOT NULL,
 	"observed_at" timestamp with time zone NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"payload_hash" text NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "display_profiles" (
@@ -76,7 +77,8 @@ CREATE TABLE IF NOT EXISTS "display_video_snapshots" (
 	"view_count" integer,
 	"provenance" jsonb DEFAULT '{}'::jsonb NOT NULL,
 	"observed_at" timestamp with time zone NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"payload_hash" text NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "display_videos" (
@@ -211,11 +213,11 @@ END $$;
 --> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "display_metric_provenance_identity_id_idx" ON "display_metric_provenance" USING btree ("workspace_id","id");--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "display_profile_snapshots_identity_id_idx" ON "display_profile_snapshots" USING btree ("workspace_id","id");--> statement-breakpoint
-CREATE UNIQUE INDEX IF NOT EXISTS "display_profile_snapshots_idempotent_idx" ON "display_profile_snapshots" USING btree ("workspace_id","connection_id","observed_at");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "display_profile_snapshots_idempotent_idx" ON "display_profile_snapshots" USING btree ("workspace_id","connection_id","payload_hash");--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "display_profiles_identity_id_idx" ON "display_profiles" USING btree ("workspace_id","id");--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "display_profiles_connection_idx" ON "display_profiles" USING btree ("workspace_id","connection_id");--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "display_sync_runs_identity_id_idx" ON "display_sync_runs" USING btree ("workspace_id","id");--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "display_video_snapshots_identity_id_idx" ON "display_video_snapshots" USING btree ("workspace_id","id");--> statement-breakpoint
-CREATE UNIQUE INDEX IF NOT EXISTS "display_video_snapshots_idempotent_idx" ON "display_video_snapshots" USING btree ("workspace_id","connection_id","provider_video_hash","observed_at");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "display_video_snapshots_idempotent_idx" ON "display_video_snapshots" USING btree ("workspace_id","connection_id","provider_video_hash","payload_hash");--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "display_videos_identity_id_idx" ON "display_videos" USING btree ("workspace_id","id");--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "display_videos_idempotent_idx" ON "display_videos" USING btree ("workspace_id","connection_id","provider_video_hash");

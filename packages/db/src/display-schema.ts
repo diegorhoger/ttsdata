@@ -248,7 +248,8 @@ export const displayProfiles = pgTable('display_profiles', {
 
 /**
  * Time-series profile snapshots. Each sync creates a new snapshot row.
- * Idempotent on (connection_id, observed_at).
+ * Idempotent on (connection_id, payload_hash) — same payload produces
+ * the same hash, so replaying creates no duplicate snapshots.
  */
 export const displayProfileSnapshots = pgTable('display_profile_snapshots', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -265,9 +266,10 @@ export const displayProfileSnapshots = pgTable('display_profile_snapshots', {
   provenance: jsonb('provenance').$type<Record<string, unknown>>().notNull().default({}),
   observedAt: date('observed_at').notNull(),
   createdAt: date('created_at').notNull().defaultNow(),
+  payloadHash: text('payload_hash').notNull(),
 }, (t) => ({
   identityId: uniqueIndex('display_profile_snapshots_identity_id_idx').on(t.workspaceId, t.id),
-  idempotent: uniqueIndex('display_profile_snapshots_idempotent_idx').on(t.workspaceId, t.connectionId, t.observedAt),
+  idempotent: uniqueIndex('display_profile_snapshots_idempotent_idx').on(t.workspaceId, t.connectionId, t.payloadHash),
   actor: actor('display_profile_snapshots_actor_fk', t),
   connectionFk: foreignKey({
     name: 'display_profile_snapshots_connection_fk',
@@ -329,7 +331,7 @@ export const displayVideos = pgTable('display_videos', {
 
 /**
  * Time-series video metric snapshots. Each sync creates new snapshot rows.
- * Idempotent on (connection_id, provider_video_hash, observed_at).
+ * Idempotent on (connection_id, provider_video_hash, payload_hash).
  */
 export const displayVideoSnapshots = pgTable('display_video_snapshots', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -344,9 +346,10 @@ export const displayVideoSnapshots = pgTable('display_video_snapshots', {
   provenance: jsonb('provenance').$type<Record<string, unknown>>().notNull().default({}),
   observedAt: date('observed_at').notNull(),
   createdAt: date('created_at').notNull().defaultNow(),
+  payloadHash: text('payload_hash').notNull(),
 }, (t) => ({
   identityId: uniqueIndex('display_video_snapshots_identity_id_idx').on(t.workspaceId, t.id),
-  idempotent: uniqueIndex('display_video_snapshots_idempotent_idx').on(t.workspaceId, t.connectionId, t.providerVideoHash, t.observedAt),
+  idempotent: uniqueIndex('display_video_snapshots_idempotent_idx').on(t.workspaceId, t.connectionId, t.providerVideoHash, t.payloadHash),
   actor: actor('display_video_snapshots_actor_fk', t),
   connectionFk: foreignKey({
     name: 'display_video_snapshots_connection_fk',
