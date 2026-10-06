@@ -100,12 +100,12 @@ describe('DisplaySyncService integration', () => {
     const result2 = await service.syncProfile(workspaceId, userId, connectionId);
     expect(result2.status).toBe('succeeded');
 
-    // Should have exactly 2 snapshots (one per sync)
+    // Should have exactly 1 snapshot (identical payload deduplicated via payload_hash)
     const snapshots = await pool.query(
       `SELECT COUNT(*) FROM display_profile_snapshots
        WHERE workspace_id = $1 AND user_id = $2 AND connection_id = $3`,
       [workspaceId, userId, connectionId]
     );
-    expect(parseInt(snapshots.rows[0].count)).toBe(2);
+    expect(parseInt(snapshots.rows[0].count)).toBe(1);
   });
 });

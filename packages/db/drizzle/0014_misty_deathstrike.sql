@@ -221,3 +221,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS "display_video_snapshots_identity_id_idx" ON "
 CREATE UNIQUE INDEX IF NOT EXISTS "display_video_snapshots_idempotent_idx" ON "display_video_snapshots" USING btree ("workspace_id","connection_id","provider_video_hash","payload_hash");--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "display_videos_identity_id_idx" ON "display_videos" USING btree ("workspace_id","id");--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "display_videos_idempotent_idx" ON "display_videos" USING btree ("workspace_id","connection_id","provider_video_hash");
+--> statement-breakpoint
+-- Ensure kill switch defaults to disabled per Issue #21 requirement
+DO $$ BEGIN
+ UPDATE display_capability_controls SET enabled = false WHERE singleton = true AND enabled = true;
+EXCEPTION
+ WHEN undefined_table THEN null;
+END $$;
