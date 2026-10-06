@@ -307,8 +307,8 @@ export class DisplaySyncService {
 
         if (!result.ok || !result.data) {
           const errorCode = result.errorCode ?? 'provider_error';
-          // Persist checkpoint before failing so retry/resume does not duplicate committed data
-          await this.persistCursorCheckpoint(workspaceId, userId, connectionId, cursor, itemsProcessed, pagesProcessed);
+          // Persist checkpoint on the current running run, transitioning it to partial
+          await this.persistCursorCheckpoint(workspaceId, userId, connectionId, cursor, itemsProcessed, pagesProcessed, syncRunId);
           await this.failSyncRun(syncRunId, errorCode);
           return { syncRunId, status: 'partial', itemsProcessed, pagesProcessed, errorCode };
         }
@@ -353,10 +353,17 @@ export class DisplaySyncService {
         hasMore = page.hasMore;
         cursor = page.cursor;
         lastCursor = cursor;
-        await this.persistCursorCheckpoint(workspaceId, userId, connectionId, cursor, itemsProcessed, pagesProcessed);
+        await this.persistCursorCheckpoint(workspaceId, userId, connectionId, cursor, itemsProcessed, pagesProcessed, syncRunId);
       }
 
-      // Clear checkpoint on successful completion
+      // Safety-limit termination: if provider still has more pages, the sync is partial, not complete
+      if (hasMore) {
+        await this.persistCursorCheckpoint(workspaceId, userId, connectionId, cursor, itemsProcessed, pagesProcessed, syncRunId);
+        await this.completeSyncRun(syncRunId, 'partial', itemsProcessed, pagesProcessed);
+        return { syncRunId, status: 'partial', itemsProcessed, pagesProcessed, errorCode: null };
+      }
+
+      // Clear checkpoint only on truthful completion
       await this.clearCursorCheckpoint(workspaceId, userId, connectionId);
 
       // Update connection last_sync_at
@@ -406,7 +413,7 @@ export class DisplaySyncService {
   private async failSyncRun(syncRunId: string, errorCode: string): Promise<void> {
     await this.pool.query(
       `UPDATE display_sync_runs
-       SET status = 'failed', error_code = $2, finished_at = NOW()
+       SET error_code = $2, finished_at = NOW()
        WHERE id = $1`,
       [syncRunId, errorCode],
     );
@@ -566,18 +573,30 @@ export class DisplaySyncService {
     cursor: string | null,
     itemsProcessed: number,
     pagesProcessed: number,
+    syncRunId?: string,
   ): Promise<void> {
-    await this.pool.query(
-      `UPDATE display_sync_runs
-       SET cursor_checkpoint = $4, items_processed = $5, pages_processed = $6
-       WHERE id = (
-         SELECT id FROM display_sync_runs
-         WHERE workspace_id = $1 AND user_id = $2 AND connection_id = $3
-           AND status = 'partial'
-         ORDER BY started_at DESC LIMIT 1
-       )`,
-      [workspaceId, userId, connectionId, cursor, itemsProcessed, pagesProcessed],
-    );
+    if (syncRunId) {
+      // Update the current run and transition it to partial so the checkpoint is durable
+      await this.pool.query(
+        `UPDATE display_sync_runs
+         SET status = 'partial', cursor_checkpoint = $5, items_processed = $6, pages_processed = $7
+         WHERE id = $1 AND workspace_id = $2 AND user_id = $3 AND connection_id = $4`,
+        [syncRunId, workspaceId, userId, connectionId, cursor, itemsProcessed, pagesProcessed],
+      );
+    } else {
+      // Resume path: update the most recent partial run for this connection
+      await this.pool.query(
+        `UPDATE display_sync_runs
+         SET cursor_checkpoint = $4, items_processed = $5, pages_processed = $6
+         WHERE id = (
+           SELECT id FROM display_sync_runs
+           WHERE workspace_id = $1 AND user_id = $2 AND connection_id = $3
+             AND status = 'partial'
+           ORDER BY started_at DESC LIMIT 1
+         )`,
+        [workspaceId, userId, connectionId, cursor, itemsProcessed, pagesProcessed],
+      );
+    }
   }
 
   private async clearCursorCheckpoint(

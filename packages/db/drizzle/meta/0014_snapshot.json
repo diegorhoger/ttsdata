@@ -6062,6 +6062,13 @@
           "notNull": true,
           "default": "'{}'::jsonb"
         },
+        "payload_hash": {
+          "name": "payload_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''::text"
+        },
         "observed_at": {
           "name": "observed_at",
           "type": "timestamp with time zone",
@@ -6114,7 +6121,7 @@
               "nulls": "last"
             },
             {
-              "expression": "observed_at",
+              "expression": "payload_hash",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -6855,6 +6862,13 @@
           "notNull": true,
           "default": "'{}'::jsonb"
         },
+        "payload_hash": {
+          "name": "payload_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''::text"
+        },
         "observed_at": {
           "name": "observed_at",
           "type": "timestamp with time zone",
@@ -6913,7 +6927,7 @@
               "nulls": "last"
             },
             {
-              "expression": "observed_at",
+              "expression": "payload_hash",
               "isExpression": false,
               "asc": true,
               "nulls": "last"

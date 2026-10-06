@@ -22,12 +22,39 @@ const TEST_CIPHER = new CredentialCipher({ '1': Buffer.alloc(32, 1).toString('ba
 
 const mockPool = () => {
   const queries: Array<{ sql: string; params: unknown[] }> = [];
+  const runs: Array<{ id: string; workspace_id: string; user_id: string; connection_id: string; status: string; cursor_checkpoint: string | null; items_processed: number; pages_processed: number; started_at: Date }> = [];
   const pool = {
     query: vi.fn(async (sql: string, params: unknown[]) => {
       queries.push({ sql, params });
-      // Return appropriate mock data based on the query
-      if (sql.includes('display_capability_controls')) {
-        return { rows: [{ enabled: true }] };
+      // Track display_sync_runs state for checkpoint/resume tests
+      if (sql.includes('display_sync_runs') && sql.includes('INSERT')) {
+        const p = params as unknown[];
+        const [workspaceId, userId, connectionId, kind, runId] = p;
+        runs.push({ id: String(runId), workspace_id: String(workspaceId), user_id: String(userId), connection_id: String(connectionId), status: 'running', cursor_checkpoint: null, items_processed: 0, pages_processed: 0, started_at: new Date() });
+        return { rows: [{ id: runId }] };
+      }
+      if (sql.includes('display_sync_runs') && sql.includes('UPDATE') && sql.includes("status = 'partial'")) {
+        const p = params as unknown[];
+        const [runId, workspaceId, userId, connectionId, cursorCheckpoint, itemsProcessed, pagesProcessed] = p;
+        const run = runs.find(r => r.id === String(runId) && r.workspace_id === String(workspaceId) && r.user_id === String(userId) && r.connection_id === String(connectionId));
+        if (run) { Object.assign(run, { status: 'partial', cursor_checkpoint: cursorCheckpoint ? String(cursorCheckpoint) : null, items_processed: Number(itemsProcessed), pages_processed: Number(pagesProcessed) }); }
+        return { rows: [{ id: runId }] };
+      }
+      if (sql.includes('display_sync_runs') && sql.includes('UPDATE') && sql.includes('status =')) {
+        const p = params as unknown[];
+        const [runId, workspaceId, userId, connectionId, status, itemsProcessed, pagesProcessed] = p;
+        const run = runs.find(r => r.id === String(runId) && r.workspace_id === String(workspaceId) && r.user_id === String(userId) && r.connection_id === String(connectionId));
+        if (run) { Object.assign(run, { status: String(status), items_processed: Number(itemsProcessed), pages_processed: Number(pagesProcessed) }); }
+        return { rows: [{ id: runId }] };
+      }
+      if (sql.includes('display_sync_runs') && sql.includes('SELECT') && sql.includes("status = 'partial'")) {
+        const p = params as unknown[];
+        const [workspaceId, userId, connectionId] = p;
+        const partialRuns = runs.filter(r => r.workspace_id === String(workspaceId) && r.user_id === String(userId) && r.connection_id === String(connectionId) && r.status === 'partial');
+        return { rows: partialRuns };
+      }
+      if (sql.includes('display_sync_runs') && sql.includes('SELECT')) {
+        return { rows: [] };
       }
       if (sql.includes('display_connections') && sql.includes('SELECT')) {
         return {
@@ -296,7 +323,7 @@ describe('DisplaySyncService', () => {
 
       const result = await service.syncVideos('ws-1', 'user-1', 'conn-1');
 
-      expect(result.status).toBe('succeeded');
+      expect(result.status).toBe('partial');
       expect(result.pagesProcessed).toBe(100);
     });
 
@@ -333,6 +360,63 @@ describe('DisplaySyncService', () => {
       expect(result.errorCode).toBe('provider_rate_limited');
       expect(result.itemsProcessed).toBe(1);
       expect(result.pagesProcessed).toBe(1);
+    });
+
+    it('resumes from persisted checkpoint on partial failure', async () => {
+      let callCount = 0;
+      const calls: Array<{ accessToken: string; maxCount: number; cursor: string | null | undefined }> = [];
+      vi.spyOn(mockAdapter, 'fetchVideoList').mockImplementation(async (accessToken, maxCount, cursor) => {
+        callCount++;
+        calls.push({ accessToken, maxCount, cursor });
+        // First call: no cursor, returns page 1
+        if (callCount === 1) {
+          return {
+            ok: true,
+            status: 200,
+            data: {
+              data: { videos: [{ id: 'v1', title: 'Video 1' }], cursor: 'cursor-1', has_more: true },
+              error: { code: 'ok', message: '', log_id: 'abc123' },
+            },
+            errorCode: null,
+          };
+        }
+        // Second call: with cursor-1, returns page 2 but fails
+        if (callCount === 2) {
+          return {
+            ok: false,
+            status: 429,
+            data: null,
+            errorCode: 'provider_rate_limited',
+          };
+        }
+        // Third call: resume from cursor-1, returns page 3
+        return {
+          ok: true,
+          status: 200,
+          data: {
+            data: { videos: [{ id: 'v3', title: 'Video 3' }], cursor: null, has_more: false },
+            error: { code: 'ok', message: '', log_id: 'def456' },
+          },
+          errorCode: null,
+        };
+      });
+
+      // First sync: partial failure after page 1
+      const result1 = await service.syncVideos('ws-1', 'user-1', 'conn-1');
+      expect(result1.status).toBe('partial');
+      expect(result1.itemsProcessed).toBe(1);
+      expect(result1.pagesProcessed).toBe(1);
+
+      // Resume sync: should start from cursor-1, not page 1
+      const result2 = await service.syncVideos('ws-1', 'user-1', 'conn-1');
+      expect(result2.status).toBe('succeeded');
+      expect(result2.itemsProcessed).toBe(2);
+      expect(result2.pagesProcessed).toBe(2);
+
+      // Total calls: page 1, page 2 (failure), resume page 2 (with cursor-1)
+      expect(callCount).toBe(3);
+      // Page 2 request must use the cursor from page 1
+      expect(calls[1].cursor).toBe('cursor-1');
     });
 
     it('passes cursor to fetchVideoList on page 2', async () => {
