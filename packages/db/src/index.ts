@@ -75,3 +75,18 @@ export {
   type RefreshCredentialsInput,
   type StoredDisplayCredentials,
 } from './repositories/display';
+export {
+  DisplaySyncService,
+  type DisplaySyncKind,
+  type DisplaySyncStatus,
+  type DisplaySyncResult,
+  type DisplaySyncServiceOptions,
+} from './display/sync';
+export {
+  displayProfiles,
+  displayProfileSnapshots,
+  displayVideos,
+  displayVideoSnapshots,
+  displayMetricProvenance,
+  displaySyncRuns,
+} from './display-schema';

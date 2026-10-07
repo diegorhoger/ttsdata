@@ -200,3 +200,242 @@ export const displayRateLimits = pgTable('display_rate_limits', {
     AND ${t.count} >= 0
   `),
 }));
+
+// ============================================================
+// Issue #21 — Display profile/video synchronization
+// ============================================================
+
+/**
+ * Current profile state per connection. One row per connection, updated on
+ * each sync. External identifiers are stored as HMAC hashes scoped to the
+ * connection, never as raw provider IDs.
+ */
+export const displayProfiles = pgTable('display_profiles', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: workspace(),
+  userId: uuid('user_id').notNull(),
+  connectionId: uuid('connection_id').notNull(),
+  /** HMAC of provider open_id, scoped to this connection. */
+  providerAccountHash: text('provider_account_hash').notNull(),
+  displayName: text('display_name'),
+  avatarUrl: text('avatar_url'),
+  followerCount: integer('follower_count'),
+  followingCount: integer('following_count'),
+  likesCount: integer('likes_count'),
+  videoCount: integer('video_count'),
+  /** Provenance metadata for this profile observation. */
+  provenance: jsonb('provenance').$type<Record<string, unknown>>().notNull().default({}),
+  observedAt: date('observed_at').notNull().defaultNow(),
+  createdAt: date('created_at').notNull().defaultNow(),
+  updatedAt: date('updated_at').notNull().defaultNow(),
+}, (t) => ({
+  identityId: uniqueIndex('display_profiles_identity_id_idx').on(t.workspaceId, t.id),
+  connection: uniqueIndex('display_profiles_connection_idx').on(t.workspaceId, t.connectionId),
+  actor: actor('display_profiles_actor_fk', t),
+  connectionFk: foreignKey({
+    name: 'display_profiles_connection_fk',
+    columns: [t.workspaceId, t.connectionId],
+    foreignColumns: [displayConnections.workspaceId, displayConnections.id],
+  }).onDelete('cascade'),
+  shape: check('display_profiles_shape_check', sql`
+    ${t.providerAccountHash} ~ '^[a-f0-9]{64}$'
+    AND (${t.followerCount} IS NULL OR ${t.followerCount} >= 0)
+    AND (${t.followingCount} IS NULL OR ${t.followingCount} >= 0)
+    AND (${t.likesCount} IS NULL OR ${t.likesCount} >= 0)
+    AND (${t.videoCount} IS NULL OR ${t.videoCount} >= 0)
+  `),
+}));
+
+/**
+ * Time-series profile snapshots. Each sync creates a new snapshot row.
+ * Idempotent on (connection_id, payload_hash) — same payload produces
+ * the same hash, so replaying creates no duplicate snapshots.
+ */
+export const displayProfileSnapshots = pgTable('display_profile_snapshots', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: workspace(),
+  userId: uuid('user_id').notNull(),
+  connectionId: uuid('connection_id').notNull(),
+  providerAccountHash: text('provider_account_hash').notNull(),
+  displayName: text('display_name'),
+  avatarUrl: text('avatar_url'),
+  followerCount: integer('follower_count'),
+  followingCount: integer('following_count'),
+  likesCount: integer('likes_count'),
+  videoCount: integer('video_count'),
+  provenance: jsonb('provenance').$type<Record<string, unknown>>().notNull().default({}),
+  observedAt: date('observed_at').notNull(),
+  createdAt: date('created_at').notNull().defaultNow(),
+  payloadHash: text('payload_hash').notNull(),
+}, (t) => ({
+  identityId: uniqueIndex('display_profile_snapshots_identity_id_idx').on(t.workspaceId, t.id),
+  idempotent: uniqueIndex('display_profile_snapshots_idempotent_idx').on(t.workspaceId, t.connectionId, t.payloadHash),
+  actor: actor('display_profile_snapshots_actor_fk', t),
+  connectionFk: foreignKey({
+    name: 'display_profile_snapshots_connection_fk',
+    columns: [t.workspaceId, t.connectionId],
+    foreignColumns: [displayConnections.workspaceId, displayConnections.id],
+  }).onDelete('cascade'),
+  shape: check('display_profile_snapshots_shape_check', sql`
+    ${t.providerAccountHash} ~ '^[a-f0-9]{64}$'
+    AND (${t.followerCount} IS NULL OR ${t.followerCount} >= 0)
+    AND (${t.followingCount} IS NULL OR ${t.followingCount} >= 0)
+    AND (${t.likesCount} IS NULL OR ${t.likesCount} >= 0)
+    AND (${t.videoCount} IS NULL OR ${t.videoCount} >= 0)
+  `),
+}));
+
+/**
+ * Current video entities per connection. Idempotent on
+ * (connection_id, provider_video_hash). External video IDs are stored as
+ * HMAC hashes scoped to the connection.
+ */
+export const displayVideos = pgTable('display_videos', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: workspace(),
+  userId: uuid('user_id').notNull(),
+  connectionId: uuid('connection_id').notNull(),
+  /** HMAC of provider video ID, scoped to this connection. */
+  providerVideoHash: text('provider_video_hash').notNull(),
+  title: text('title'),
+  videoDescription: text('video_description'),
+  coverImageUrl: text('cover_image_url'),
+  shareUrl: text('share_url'),
+  duration: integer('duration'),
+  height: integer('height'),
+  width: integer('width'),
+  createTime: timestamp('create_time', { withTimezone: true }),
+  isAigc: boolean('is_aigc'),
+  embedLink: text('embed_link'),
+  /** Provenance metadata for this video entity. */
+  provenance: jsonb('provenance').$type<Record<string, unknown>>().notNull().default({}),
+  observedAt: date('observed_at').notNull().defaultNow(),
+  createdAt: date('created_at').notNull().defaultNow(),
+  updatedAt: date('updated_at').notNull().defaultNow(),
+}, (t) => ({
+  identityId: uniqueIndex('display_videos_identity_id_idx').on(t.workspaceId, t.id),
+  idempotent: uniqueIndex('display_videos_idempotent_idx').on(t.workspaceId, t.connectionId, t.providerVideoHash),
+  actor: actor('display_videos_actor_fk', t),
+  connectionFk: foreignKey({
+    name: 'display_videos_connection_fk',
+    columns: [t.workspaceId, t.connectionId],
+    foreignColumns: [displayConnections.workspaceId, displayConnections.id],
+  }).onDelete('cascade'),
+  shape: check('display_videos_shape_check', sql`
+    ${t.providerVideoHash} ~ '^[a-f0-9]{64}$'
+    AND (${t.duration} IS NULL OR ${t.duration} >= 0)
+    AND (${t.height} IS NULL OR ${t.height} >= 0)
+    AND (${t.width} IS NULL OR ${t.width} >= 0)
+  `),
+}));
+
+/**
+ * Time-series video metric snapshots. Each sync creates new snapshot rows.
+ * Idempotent on (connection_id, provider_video_hash, payload_hash).
+ */
+export const displayVideoSnapshots = pgTable('display_video_snapshots', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: workspace(),
+  userId: uuid('user_id').notNull(),
+  connectionId: uuid('connection_id').notNull(),
+  providerVideoHash: text('provider_video_hash').notNull(),
+  likeCount: integer('like_count'),
+  commentCount: integer('comment_count'),
+  shareCount: integer('share_count'),
+  viewCount: integer('view_count'),
+  provenance: jsonb('provenance').$type<Record<string, unknown>>().notNull().default({}),
+  observedAt: date('observed_at').notNull(),
+  createdAt: date('created_at').notNull().defaultNow(),
+  payloadHash: text('payload_hash').notNull(),
+}, (t) => ({
+  identityId: uniqueIndex('display_video_snapshots_identity_id_idx').on(t.workspaceId, t.id),
+  idempotent: uniqueIndex('display_video_snapshots_idempotent_idx').on(t.workspaceId, t.connectionId, t.providerVideoHash, t.payloadHash),
+  actor: actor('display_video_snapshots_actor_fk', t),
+  connectionFk: foreignKey({
+    name: 'display_video_snapshots_connection_fk',
+    columns: [t.workspaceId, t.connectionId],
+    foreignColumns: [displayConnections.workspaceId, displayConnections.id],
+  }).onDelete('cascade'),
+  shape: check('display_video_snapshots_shape_check', sql`
+    ${t.providerVideoHash} ~ '^[a-f0-9]{64}$'
+    AND (${t.likeCount} IS NULL OR ${t.likeCount} >= 0)
+    AND (${t.commentCount} IS NULL OR ${t.commentCount} >= 0)
+    AND (${t.shareCount} IS NULL OR ${t.shareCount} >= 0)
+    AND (${t.viewCount} IS NULL OR ${t.viewCount} >= 0)
+  `),
+}));
+
+/**
+ * Metric provenance and classification. Every exposed metric must have a
+ * row here identifying its source, endpoint, scopes, and classification.
+ */
+export const displayMetricProvenance = pgTable('display_metric_provenance', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: workspace(),
+  userId: uuid('user_id').notNull(),
+  connectionId: uuid('connection_id').notNull(),
+  /** The metric name, e.g. 'follower_count', 'like_count'. */
+  metricName: text('metric_name').notNull(),
+  /** Classification: observed, calculated, inferred, unavailable. */
+  classification: text('classification').notNull(),
+  /** The provider endpoint that produced this metric. */
+  sourceEndpoint: text('source_endpoint').notNull(),
+  /** The scopes required to access this metric. */
+  scopes: jsonb('scopes').$type<string[]>().notNull(),
+  /** The sync run that produced this metric. */
+  syncRunId: uuid('sync_run_id').notNull(),
+  /** When the metric was retrieved from the provider. */
+  retrievedAt: date('retrieved_at').notNull(),
+  createdAt: date('created_at').notNull().defaultNow(),
+}, (t) => ({
+  identityId: uniqueIndex('display_metric_provenance_identity_id_idx').on(t.workspaceId, t.id),
+  actor: actor('display_metric_provenance_actor_fk', t),
+  connectionFk: foreignKey({
+    name: 'display_metric_provenance_connection_fk',
+    columns: [t.workspaceId, t.connectionId],
+    foreignColumns: [displayConnections.workspaceId, displayConnections.id],
+  }).onDelete('cascade'),
+  shape: check('display_metric_provenance_shape_check', sql`
+    ${t.classification} IN ('observed','calculated','inferred','unavailable')
+    AND jsonb_typeof(${t.scopes}) = 'array'
+  `),
+}));
+
+/**
+ * Sync run tracking. Each sync execution creates a run record with its
+ * status, cursor checkpoint, and error information.
+ */
+export const displaySyncRuns = pgTable('display_sync_runs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: workspace(),
+  userId: uuid('user_id').notNull(),
+  connectionId: uuid('connection_id').notNull(),
+  kind: text('kind').notNull(),
+  status: text('status').notNull().default('running'),
+  /** The cursor checkpoint for video pagination. */
+  cursorCheckpoint: text('cursor_checkpoint'),
+  /** The provider video hash to resume from. */
+  resumeAfterHash: text('resume_after_hash'),
+  /** Number of items processed in this run. */
+  itemsProcessed: integer('items_processed').notNull().default(0),
+  /** Number of pages fetched in this run. */
+  pagesProcessed: integer('pages_processed').notNull().default(0),
+  errorCode: text('error_code'),
+  startedAt: date('started_at').notNull().defaultNow(),
+  finishedAt: date('finished_at'),
+  createdAt: date('created_at').notNull().defaultNow(),
+}, (t) => ({
+  identityId: uniqueIndex('display_sync_runs_identity_id_idx').on(t.workspaceId, t.id),
+  actor: actor('display_sync_runs_actor_fk', t),
+  connectionFk: foreignKey({
+    name: 'display_sync_runs_connection_fk',
+    columns: [t.workspaceId, t.connectionId],
+    foreignColumns: [displayConnections.workspaceId, displayConnections.id],
+  }).onDelete('cascade'),
+  shape: check('display_sync_runs_shape_check', sql`
+    ${t.kind} IN ('profile_sync','video_sync')
+    AND ${t.status} IN ('running','succeeded','failed','partial')
+    AND ${t.itemsProcessed} >= 0
+    AND ${t.pagesProcessed} >= 0
+  `),
+}));

@@ -99,6 +99,13 @@
       "when": 1790965024126,
       "tag": "0013_slow_solo",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1791233439431,
+      "tag": "0014_misty_deathstrike",
+      "breakpoints": true
     }
   ]
 }
