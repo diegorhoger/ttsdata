@@ -158,14 +158,16 @@ export class DisplayApiAdapter {
     }
   }
 
-  async fetchVideoList(accessToken: string, maxCount = 20): Promise<DisplayOperationResult<Record<string, unknown>>> {
+  async fetchVideoList(accessToken: string, maxCount = 20, cursor: string | null = null): Promise<DisplayOperationResult<Record<string, unknown>>> {
     const url = `${DISPLAY_API_BASE}/video/list/?fields=id,title,create_time,cover_image_url,share_url,video_description,duration,height,width,like_count,comment_count,share_count,view_count`;
     assertDisplayEndpointAllowed(url);
+    const body: Record<string, unknown> = { max_count: maxCount };
+    if (cursor) body.cursor = cursor;
     try {
       const response = await this.fetchImpl(url, {
         method: 'POST',
         headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ max_count: maxCount }),
+        body: JSON.stringify(body),
       });
       const json = (await response.json().catch(() => ({}))) as Record<string, unknown>;
       return {

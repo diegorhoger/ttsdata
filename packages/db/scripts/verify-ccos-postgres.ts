@@ -29,6 +29,13 @@ const CCOS_TABLES = [
   'display_probe_evidence',
   'display_audit',
   'display_rate_limits',
+  // Issue #21 — Display profile/video synchronization
+  'display_metric_provenance',
+  'display_profile_snapshots',
+  'display_profiles',
+  'display_sync_runs',
+  'display_video_snapshots',
+  'display_videos',
 ] as const;
 type ForeignKeyExpectation = {
   name: string;
@@ -130,6 +137,7 @@ if (!parsedUrl.pathname.slice(1).endsWith('_test')) {
 const packageRoot = resolve(process.cwd());
 const migrationsFolder = resolve(packageRoot, 'drizzle');
 const rollbackPaths = [
+  resolve(migrationsFolder, 'rollback/0014_misty_deathstrike.down.sql'),
   resolve(migrationsFolder, 'rollback/0013_slow_solo.down.sql'),
   resolve(migrationsFolder, 'rollback/0012_shiny_wendigo.down.sql'),
   resolve(migrationsFolder, 'rollback/0011_ai_dispatch_authorization.down.sql'),
@@ -203,7 +211,7 @@ async function getMigrationCreatedAt(): Promise<number[]> {
   const journal = JSON.parse(await readFile(journalPath, 'utf8')) as {
     entries?: Array<{ tag?: string; when?: number }>;
   };
-  const tags = ['0002_worried_lyja', '0003_silly_otto_octavius', '0004_brainy_black_bird', '0005_free_human_robot', '0006_nappy_raider', '0007_ccos_performance_snapshots', '0008_red_the_santerians', '0009_yummy_fantastic_four', '0010_ai_gateway', '0011_ai_dispatch_authorization', '0012_shiny_wendigo', '0013_slow_solo'];
+  const tags = ['0002_worried_lyja', '0003_silly_otto_octavius', '0004_brainy_black_bird', '0005_free_human_robot', '0006_nappy_raider', '0007_ccos_performance_snapshots', '0008_red_the_santerians', '0009_yummy_fantastic_four', '0010_ai_gateway', '0011_ai_dispatch_authorization', '0012_shiny_wendigo', '0013_slow_solo', '0014_misty_deathstrike'];
   const entries = tags.map((tag) => journal.entries?.find((entry) => entry.tag === tag));
   if (entries.some((entry) => !entry || typeof entry.when !== 'number')) {
     throw new Error('Migration journal is missing a CCOS migration entry');
